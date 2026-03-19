@@ -188,6 +188,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         context.user_data['meal_type'] = meal_type
         await query.edit_message_text(f"🍽 Отлично! Что вы съели на {meal_names[meal_type]}?")
+    elif query.data == 'show_daily_stats':
+        # Показываем статистику за сегодня
+        summary = db.get_daily_summary(user_id)
+        user = db.get_user(user_id)
+        
+        if not summary['meals']['breakfast'] and not summary['meals']['lunch'] and \
+           not summary['meals']['dinner'] and not summary['meals']['snack']:
+            await query.edit_message_text("📊 За сегодня еще ничего не записано.")
+            return
+        
+        response = f"📊 Статистика за {summary['date']}:\n\n"
+        
+        meal_names = {
+            'breakfast': '🍳 Завтрак',
+            'lunch': '🍲 Обед',
+            'dinner': '🍽 Ужин',
+            'snack': '🍎 Перекусы'
+        }
+        
+        for meal_type, meal_name in meal_names.items():
+            if summary['meals'][meal_type]:
+                response += f"{meal_name}:\n"
+                for item in summary['meals'][meal_type]:
+                    response += f"  • {item['name']} ({item['weight']}г): "
+                    response += f"{item['calories']:.0f} ккал\n"
+                response += "\n"
+        
+        total = summary['total']
+        response += f"📈 ИТОГО ЗА ДЕНЬ:\n"
+        response += f"🔥 Калории: {total['calories']:.0f} ккал"
+        
+        if user and user.daily_calories:
+            percent = (total['calories'] / user.daily_calories) * 100
+            response += f" ({percent:.1f}% от нормы)\n"
+        else:
+            response += "\n"
+        
+        response += f"💪 Белки: {total['proteins']:.1f}г\n"
+        response += f"🧈 Жиры: {total['fats']:.1f}г\n"
+        response += f"🍚 Углеводы: {total['carbs']:.1f}г\n"
+        
+        await query.edit_message_text(response)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка сообщений от пользователя"""
@@ -355,4 +397,7 @@ def main():
     # Запускаем бота
     print("🚀 Бот запущен...")
     print("📝 Используйте команды: /start, /settings, /stats")
-    application.run_polling(allowed_updates=Update.ALL_TYPE
+    application.run_polling(allowed_updates=Update.ALL_TYPES)  # ← Здесь была ошибка - не хватало скобки
+
+if __name__ == '__main__':
+    main()
