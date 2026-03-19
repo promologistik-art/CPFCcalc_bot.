@@ -7,73 +7,67 @@ class FoodParser:
         
     def parse_message(self, text):
         """Улучшенный парсинг сообщения с продуктами"""
-        # Разделяем сообщение на отдельные продукты по запятым или союзам
-        # Теперь учитываем, что в одном сообщении может быть несколько блюд
+        # Нормализуем текст
+        text = text.lower().strip()
+        
+        # Заменяем разные варианты написания
+        text = text.replace(' гр ', ' г ').replace(' грамм ', ' г ')
+        text = text.replace(' литр ', ' л ').replace(' литра ', ' л ').replace(' литров ', ' л ')
+        
+        # Разделяем по запятым, но сохраняем числа
+        results = []
         
         # Сначала пробуем разделить по запятым
         if ',' in text:
-            lines = text.split(',')
+            parts = text.split(',')
         else:
-            # Если запятых нет, пробуем разделить по союзам "и", "а также"
-            lines = re.split(r'\s+и\s+|\s+а также\s+|\s+плюс\s+', text.lower())
+            # Если запятых нет, пробуем разделить по союзам
+            parts = re.split(r'\s+и\s+|\s+а также\s+|\s+плюс\s+', text)
         
-        results = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
+        for part in parts:
+            part = part.strip()
+            if not part:
                 continue
             
-            # Проверяем, содержит ли строка несколько блюд (например, "4 яйца, 2 бутерброда")
-            if self._contains_multiple_items(line):
-                items = self._split_multiple_items(line)
-                for item in items:
-                    results.extend(self._parse_single_item(item))
-            else:
-                results.extend(self._parse_single_item(line))
+            # Обрабатываем каждую часть
+            items = self._parse_part(part)
+            results.extend(items)
         
         return results
     
-    def _contains_multiple_items(self, text):
-        """Проверка, содержит ли строка несколько блюд"""
-        # Ищем числа перед словами (яйца, бутерброда, порции и т.д.)
-        patterns = [
-            r'\d+\s*(?:шт|яйц[ао]|бутерброд|порци|куск|ломтик)',
-            r'\d+\s+разных',
-            r'\d+\s+вида',
-        ]
-        count = 0
-        for pattern in patterns:
-            matches = re.findall(pattern, text)
-            count += len(matches)
-        return count > 1
-    
-    def _split_multiple_items(self, text):
-        """Разделение строки с несколькими блюдами"""
-        # Ищем числа с последующими словами
-        items = []
-        current_pos = 0
+    def _parse_part(self, text):
+        """Парсинг одной части сообщения"""
+        # Проверяем, содержит ли часть несколько продуктов (например, "пиво 3 литра и арахис")
+        if ' и ' in text and not self._is_complex_dish(text):
+            # Разделяем по "и"
+            subparts = text.split(' и ')
+            items = []
+            for subpart in subparts:
+                items.extend(self._parse_single_item(subpart))
+            return items
         
-        # Паттерн для поиска: число + пробел + слово (яйца, бутерброда и т.д.)
-        pattern = r'(\d+)\s*(?:шт\s*)?([а-я]+(?:[а-я]*))'
-        
-        matches = list(re.finditer(pattern, text))
-        
-        for i, match in enumerate(matches):
-            start = match.start()
-            if i < len(matches) - 1:
-                end = matches[i + 1].start()
-            else:
-                end = len(text)
-            
-            item_text = text[start:end].strip()
-            items.append(item_text)
-        
-        return items if items else [text]
+        # Если это одно блюдо или продукт
+        return self._parse_single_item(text)
     
     def _parse_single_item(self, text):
         """Парсинг одного продукта или блюда"""
-        text = text.lower().strip()
+        text = text.strip()
+        if not text:
+            return []
+        
+        # Сначала ищем вес
+        weight_info = self._extract_weight_and_product(text)
+        if weight_info:
+            product_name, weight = weight_info
+            # Проверяем, является ли продукт сложным блюдом
+            if self._is_complex_dish(product_name):
+                return self._parse_complex_dish_with_weight(product_name, weight)
+            else:
+                return [{'name': product_name, 'weight': weight}]
+        
+        # Если вес не найден, проверяем сложные блюда
+        if self._is_complex_dish(text):
+            return self._parse_complex_dish(text)
         
         # Проверяем специальные случаи
         if 'яичница' in text or 'яйца' in text or 'яйцо' in text:
@@ -96,9 +90,216 @@ class FoodParser:
             return self._parse_blini(text)
         elif 'котлеты' in text:
             return self._parse_cutlets(text)
+        elif 'арахис' in text or 'орехи' in text:
+            return self._parse_nuts(text)
         else:
             # Обычный продукт
             return self._parse_simple_food(text)
+    
+    def _extract_weight_and_product(self, text):
+        """Извлечение веса и названия продукта из текста"""
+        # Паттерны для разных форматов: "3 литра пива", "пиво 3 литра", "100 гр арахиса"
+        patterns = [
+            # Формат: "100 гр арахиса" (вес перед продуктом)
+            r'(\d+)\s*(?:г|гр|грамм|мл|л|литр(?:а|ов)?)\s+([а-я]+(?:[а-я\s]*[а-я])?)',
+            # Формат: "арахис 100 гр" (продукт перед весом)
+            r'([а-я]+(?:[а-я\s]*[а-я])?)\s+(\d+)\s*(?:г|гр|грамм|мл|л|литр(?:а|ов)?)',
+            # Формат: "3 литра пива" (вес с единицей перед продуктом)
+            r'(\d+)\s*(?:л|литр(?:а|ов)?)\s+([а-я]+(?:[а-я\s]*[а-я])?)',
+            # Формат: "пива 3 литра" (продукт в родительном падеже перед весом)
+            r'([а-я]+[а-я]?[а-я]?)\s+(\d+)\s*(?:л|литр(?:а|ов)?)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                groups = match.groups()
+                if len(groups) == 2:
+                    # Определяем, где число, а где название
+                    if groups[0].isdigit():
+                        weight = float(groups[0])
+                        product = groups[1].strip()
+                    elif groups[1].isdigit():
+                        weight = float(groups[1])
+                        product = groups[0].strip()
+                    else:
+                        continue
+                    
+                    # Конвертируем литры в мл для жидкостей
+                    if 'л' in text and 'мл' not in text:
+                        weight = weight * 1000
+                    
+                    return product, weight
+        
+        return None
+    
+    def _parse_nuts(self, text):
+        """Парсинг орехов"""
+        # Проверяем наличие веса
+        weight_info = self._extract_weight_and_product(text)
+        if weight_info:
+            product_name, weight = weight_info
+            # Уточняем название
+            if 'арахис' in product_name:
+                if 'соленый' in text:
+                    return [{'name': 'арахис соленый', 'weight': weight}]
+                return [{'name': 'арахис', 'weight': weight}]
+            elif 'грецкие' in text:
+                return [{'name': 'грецкие орехи', 'weight': weight}]
+            elif 'миндаль' in text:
+                return [{'name': 'миндаль', 'weight': weight}]
+            elif 'фундук' in text:
+                return [{'name': 'фундук', 'weight': weight}]
+            elif 'кешью' in text:
+                return [{'name': 'кешью', 'weight': weight}]
+            elif 'фисташки' in text:
+                return [{'name': 'фисташки', 'weight': weight}]
+            elif 'кедровые' in text:
+                return [{'name': 'кедровые орехи', 'weight': weight}]
+        
+        # Если вес не указан, ищем его в тексте
+        weight = self._extract_weight(text)
+        if weight == 0:
+            weight = 30  # стандартная порция орехов
+        
+        # Определяем тип орехов
+        if 'арахис' in text:
+            if 'соленый' in text:
+                return [{'name': 'арахис соленый', 'weight': weight}]
+            return [{'name': 'арахис', 'weight': weight}]
+        elif 'грецкие' in text:
+            return [{'name': 'грецкие орехи', 'weight': weight}]
+        elif 'миндаль' in text:
+            return [{'name': 'миндаль', 'weight': weight}]
+        elif 'фундук' in text:
+            return [{'name': 'фундук', 'weight': weight}]
+        elif 'кешью' in text:
+            return [{'name': 'кешью', 'weight': weight}]
+        elif 'фисташки' in text:
+            return [{'name': 'фисташки', 'weight': weight}]
+        elif 'кедровые' in text:
+            return [{'name': 'кедровые орехи', 'weight': weight}]
+        else:
+            return [{'name': 'арахис', 'weight': weight}]
+    
+    def _parse_beer(self, text):
+        """Парсинг пива"""
+        # Проверяем наличие объема через weight_info
+        weight_info = self._extract_weight_and_product(text)
+        if weight_info:
+            product_name, volume = weight_info
+            # Определяем тип пива
+            if 'светлое' in text:
+                beer_name = 'пиво светлое'
+            elif 'темное' in text:
+                beer_name = 'пиво темное'
+            elif 'живое' in text:
+                beer_name = 'пиво живое'
+            elif 'безалкогольное' in text:
+                beer_name = 'пиво безалкогольное'
+            else:
+                beer_name = 'пиво светлое'
+            return [{'name': beer_name, 'weight': volume}]
+        
+        # Если не нашли через weight_info, ищем объем обычным способом
+        volume = 500  # по умолчанию 500мл
+        
+        volume_match = re.search(r'(\d+)\s*(?:мл|л|литр)', text)
+        if volume_match:
+            vol_value = int(volume_match.group(1))
+            if 'л' in text and 'мл' not in text:
+                volume = vol_value * 1000
+            else:
+                volume = vol_value
+        
+        # Ищем количество бутылок/банок
+        bottles_match = re.search(r'(\d+)\s*(?:бут|банк|шт)', text)
+        if bottles_match:
+            bottles = int(bottles_match.group(1))
+            volume = volume * bottles
+        
+        # Определяем тип пива
+        if 'светлое' in text:
+            beer_name = 'пиво светлое'
+        elif 'темное' in text:
+            beer_name = 'пиво темное'
+        elif 'живое' in text:
+            beer_name = 'пиво живое'
+        elif 'безалкогольное' in text:
+            beer_name = 'пиво безалкогольное'
+        else:
+            beer_name = 'пиво светлое'
+        
+        return [{'name': beer_name, 'weight': volume}]
+    
+    def _parse_complex_dish_with_weight(self, dish_name, weight):
+        """Парсинг сложного блюда с указанным весом"""
+        # Для сложных блюд вес обычно относится ко всему блюду целиком
+        if 'борщ' in dish_name:
+            return [{'name': 'борщ', 'weight': weight}]
+        elif 'щи' in dish_name:
+            return [{'name': 'щи', 'weight': weight}]
+        elif 'солянка' in dish_name:
+            return [{'name': 'солянка', 'weight': weight}]
+        elif 'окрошка' in dish_name:
+            return [{'name': 'окрошка', 'weight': weight}]
+        elif 'салат' in dish_name:
+            return [{'name': dish_name, 'weight': weight}]
+        elif 'суп' in dish_name:
+            return [{'name': dish_name, 'weight': weight}]
+        elif 'пельмени' in dish_name:
+            return [{'name': 'пельмени', 'weight': weight}]
+        elif 'вареники' in dish_name:
+            return [{'name': dish_name, 'weight': weight}]
+        elif 'блины' in dish_name:
+            return [{'name': dish_name, 'weight': weight}]
+        elif 'котлеты' in dish_name:
+            return [{'name': dish_name, 'weight': weight}]
+        elif 'шашлык' in dish_name:
+            return self._parse_shashlik(dish_name + f" {weight}г")
+        
+        return [{'name': dish_name, 'weight': weight}]
+    
+    def _is_complex_dish(self, text):
+        """Проверка, является ли блюдо сложным"""
+        complex_dishes = [
+            'борщ', 'щи', 'солянка', 'окрошка', 'рассольник', 'уха',
+            'бутерброд', 'сэндвич', 'салат', 'суп', 'шашлык',
+            'пюре', 'каша', 'макароны', 'пельмени', 'вареники',
+            'блины', 'оладьи', 'сырники', 'котлеты', 'тефтели',
+            'пицца', 'бургер', 'шаурма', 'хот-дог'
+        ]
+        return any(dish in text for dish in complex_dishes)
+    
+    def _parse_complex_dish(self, text):
+        """Парсинг сложного блюда без указания веса"""
+        if 'борщ' in text:
+            products = [{'name': 'борщ', 'weight': 300}]
+            if 'со сметаной' in text:
+                products.append({'name': 'сметана 20%', 'weight': 20})
+            return products
+        elif 'щи' in text:
+            return [{'name': 'щи', 'weight': 300}]
+        elif 'солянка' in text:
+            return [{'name': 'солянка', 'weight': 300}]
+        elif 'окрошка' in text:
+            return [{'name': 'окрошка', 'weight': 300}]
+        elif 'уха' in text:
+            return [{'name': 'уха', 'weight': 300}]
+        elif 'салат' in text:
+            return self._parse_salad(text)
+        elif 'суп' in text:
+            return [{'name': 'суп', 'weight': 300}]
+        elif 'шашлык' in text:
+            return self._parse_shashlik(text)
+        elif 'пельмени' in text:
+            return self._parse_pelmeni(text)
+        elif 'блины' in text:
+            return self._parse_blini(text)
+        elif 'котлеты' in text:
+            return self._parse_cutlets(text)
+        else:
+            return [{'name': text, 'weight': 200}]
     
     def _parse_eggs_dish(self, text):
         """Парсинг яичницы и яиц"""
@@ -106,9 +307,16 @@ class FoodParser:
         
         # Ищем количество яиц
         eggs_count = 2  # по умолчанию 2 яйца
+        
+        # Проверяем разные форматы: "4 яйца", "яйца 4шт", "4шт яиц"
         count_match = re.search(r'(\d+)\s*(?:шт|яйц|яиц|яйца)', text)
         if count_match:
             eggs_count = int(count_match.group(1))
+        else:
+            # Пробуем найти просто число перед словом "яйца"
+            count_match = re.search(r'(\d+)\s+яйц', text)
+            if count_match:
+                eggs_count = int(count_match.group(1))
         
         # Вес одного яйца примерно 50г
         eggs_weight = eggs_count * 50
@@ -117,19 +325,6 @@ class FoodParser:
         # Если это яичница, добавляем масло
         if 'яичница' in text or 'глазунья' in text or 'омлет' in text:
             products.append({'name': 'масло подсолнечное', 'weight': 10})
-        
-        # Если есть дополнительные ингредиенты
-        if 'с помидорами' in text:
-            products.append({'name': 'помидор', 'weight': 50})
-        if 'с сыром' in text:
-            products.append({'name': 'сыр российский', 'weight': 30})
-        if 'с беконом' in text:
-            products.append({'name': 'бекон', 'weight': 30})
-        if 'с колбасой' in text:
-            if 'копченой' in text:
-                products.append({'name': 'колбаса копченая', 'weight': 40})
-            else:
-                products.append({'name': 'колбаса вареная', 'weight': 40})
         
         return products
     
@@ -164,28 +359,12 @@ class FoodParser:
             elif 'вареной' in text or 'докторской' in text:
                 products.append({'name': 'колбаса вареная', 'weight': 40 * sandwich_count})
             else:
-                # Если не указано, по умолчанию копченая (чаще так и говорят)
-                products.append({'name': 'колбаса копченая', 'weight': 40 * sandwich_count})
+                # Если не указано, по умолчанию вареная
+                products.append({'name': 'колбаса вареная', 'weight': 40 * sandwich_count})
         
         # Сыр (25г на бутерброд)
         if 'с сыром' in text:
             products.append({'name': 'сыр российский', 'weight': 25 * sandwich_count})
-        
-        # Ветчина (30г на бутерброд)
-        if 'с ветчиной' in text:
-            products.append({'name': 'ветчина', 'weight': 30 * sandwich_count})
-        
-        # Рыба (30г на бутерброд)
-        if 'с рыбой' in text or 'с лососем' in text or 'с семгой' in text:
-            products.append({'name': 'лосось', 'weight': 30 * sandwich_count})
-        
-        # Икра (15г на бутерброд)
-        if 'с икрой' in text:
-            products.append({'name': 'икра красная', 'weight': 15 * sandwich_count})
-        
-        # Авокадо (30г на бутерброд)
-        if 'с авокадо' in text:
-            products.append({'name': 'авокадо', 'weight': 30 * sandwich_count})
         
         return products
     
@@ -193,148 +372,54 @@ class FoodParser:
         """Парсинг кофе"""
         products = []
         
-        # Основа - кофе (200мл)
+        # Проверяем наличие объема
+        weight = self._extract_weight(text)
+        if weight == 0:
+            weight = 200  # стандартная чашка
+        
         coffee_type = 'кофе'
         if 'растворимый' in text:
             coffee_type = 'кофе растворимый'
         elif 'эспрессо' in text:
             coffee_type = 'кофе эспрессо'
-            products.append({'name': coffee_type, 'weight': 50})
         elif 'капучино' in text:
             coffee_type = 'кофе капучино'
-            products.append({'name': coffee_type, 'weight': 200})
         elif 'латте' in text:
             coffee_type = 'кофе латте'
-            products.append({'name': coffee_type, 'weight': 250})
         elif 'американо' in text:
             coffee_type = 'кофе американо'
-            products.append({'name': coffee_type, 'weight': 200})
-        else:
-            products.append({'name': coffee_type, 'weight': 200})
+        
+        products.append({'name': coffee_type, 'weight': weight})
         
         # Сахар
-        sugar_match = re.search(r'(\d+)\s*(?:ложк|ч.л|чайных|ст.л)', text)
+        sugar_match = re.search(r'(\d+)\s*(?:ложк|ч.л|чайных)', text)
         if sugar_match:
             sugar_spoons = int(sugar_match.group(1))
             products.append({'name': 'сахар', 'weight': sugar_spoons * 7})
-        elif 'сахар' in text and not re.search(r'без сахара', text):
+        elif 'сахар' in text and 'без сахара' not in text:
             # Если просто сказано "с сахаром", добавляем 1 ложку
             products.append({'name': 'сахар', 'weight': 7})
         
-        # Молоко или сливки
-        if 'с молоком' in text:
-            products.append({'name': 'молоко 2.5%', 'weight': 50})
-        elif 'со сливками' in text:
-            products.append({'name': 'сливки 20%', 'weight': 30})
-        
         return products
-    
-    def _parse_beer(self, text):
-        """Парсинг пива"""
-        # Ищем объем
-        volume = 500  # по умолчанию 500мл
-        
-        volume_match = re.search(r'(\d+)\s*(?:мл|л|литр)', text)
-        if volume_match:
-            vol_value = int(volume_match.group(1))
-            if 'л' in text and 'мл' not in text:
-                volume = vol_value * 1000
-            else:
-                volume = vol_value
-        
-        # Ищем количество бутылок/банок
-        bottles_match = re.search(r'(\d+)\s*(?:бут|банк|шт)', text)
-        if bottles_match:
-            bottles = int(bottles_match.group(1))
-            volume = volume * bottles
-        
-        # Определяем тип пива
-        if 'светлое' in text:
-            beer_name = 'пиво светлое'
-        elif 'темное' in text:
-            beer_name = 'пиво темное'
-        elif 'живое' in text:
-            beer_name = 'пиво живое'
-        elif 'безалкогольное' in text:
-            beer_name = 'пиво безалкогольное'
-        else:
-            beer_name = 'пиво светлое'
-        
-        return [{'name': beer_name, 'weight': volume}]
-    
-    def _parse_simple_food(self, text):
-        """Парсинг простого продукта"""
-        # Ищем вес
-        weight = self._extract_weight(text)
-        
-        # Очищаем название от веса
-        food_name = self._clean_name(text)
-        
-        # Если вес не указан, используем стандартную порцию
-        if weight == 0:
-            food = self.db.find_food(food_name)
-            weight = self._guess_portion(food_name, food)
-        
-        return [{'name': food_name, 'weight': weight}]
     
     def _parse_salad(self, text):
         """Парсинг салата"""
         if 'оливье' in text:
-            return [
-                {'name': 'колбаса вареная', 'weight': 50},
-                {'name': 'картофель', 'weight': 50},
-                {'name': 'яйца', 'weight': 40},
-                {'name': 'огурцы соленые', 'weight': 30},
-                {'name': 'морковь вареная', 'weight': 30},
-                {'name': 'горошек консервированный', 'weight': 30},
-                {'name': 'майонез', 'weight': 30}
-            ]
+            return [{'name': 'салат оливье', 'weight': 200}]
         elif 'цезарь' in text:
-            result = [
-                {'name': 'куриная грудка', 'weight': 50},
-                {'name': 'салат', 'weight': 50},
-                {'name': 'сыр пармезан', 'weight': 15},
-                {'name': 'сухарики', 'weight': 20}
-            ]
-            if 'с соусом' in text:
-                result.append({'name': 'соус цезарь', 'weight': 30})
-            return result
+            return [{'name': 'салат цезарь', 'weight': 200}]
         elif 'греческий' in text:
-            return [
-                {'name': 'помидор', 'weight': 50},
-                {'name': 'огурец', 'weight': 50},
-                {'name': 'перец болгарский', 'weight': 30},
-                {'name': 'лук красный', 'weight': 15},
-                {'name': 'сыр фета', 'weight': 40},
-                {'name': 'маслины', 'weight': 20},
-                {'name': 'масло оливковое', 'weight': 10}
-            ]
+            return [{'name': 'салат греческий', 'weight': 200}]
+        elif 'винегрет' in text:
+            return [{'name': 'винегрет', 'weight': 200}]
         else:
             return [{'name': 'салат', 'weight': 150}]
     
-    def _parse_soup(self, text):
-        """Парсинг супа"""
-        if 'борщ' in text:
-            products = [
-                {'name': 'борщ', 'weight': 300}
-            ]
-            if 'со сметаной' in text:
-                products.append({'name': 'сметана 20%', 'weight': 20})
-            return products
-        elif 'щи' in text:
-            return [{'name': 'щи', 'weight': 300}]
-        elif 'солянка' in text:
-            return [{'name': 'солянка', 'weight': 300}]
-        elif 'окрошка' in text:
-            return [{'name': 'окрошка', 'weight': 300}]
-        elif 'уха' in text:
-            return [{'name': 'уха', 'weight': 300}]
-        else:
-            return [{'name': 'суп', 'weight': 300}]
-    
     def _parse_shashlik(self, text):
         """Парсинг шашлыка"""
-        weight = self._extract_weight(text) or 200
+        weight = self._extract_weight(text)
+        if weight == 0:
+            weight = 200
         
         if 'свинина' in text or 'свиной' in text:
             return [{'name': 'шашлык из свинины', 'weight': weight}]
@@ -349,7 +434,9 @@ class FoodParser:
     
     def _parse_pelmeni(self, text):
         """Парсинг пельменей"""
-        weight = self._extract_weight(text) or 200
+        weight = self._extract_weight(text)
+        if weight == 0:
+            weight = 200
         return [{'name': 'пельмени', 'weight': weight}]
     
     def _parse_blini(self, text):
@@ -386,6 +473,27 @@ class FoodParser:
         else:
             return [{'name': 'котлеты', 'weight': weight}]
     
+    def _parse_simple_food(self, text):
+        """Парсинг простого продукта"""
+        # Сначала пробуем найти продукт в базе
+        food = self.db.find_food(text)
+        
+        # Ищем вес
+        weight = self._extract_weight(text)
+        
+        # Если вес не указан, используем стандартную порцию
+        if weight == 0:
+            weight = self._guess_portion(text, food)
+        
+        # Если продукт не найден в базе, пробуем найти по ключевым словам
+        if not food:
+            food = self._find_by_keywords(text)
+            if food:
+                return [{'name': food.name_ru, 'weight': weight}]
+        
+        # Возвращаем исходное название
+        return [{'name': text, 'weight': weight}]
+    
     def _extract_weight(self, text):
         """Извлечение веса из текста"""
         patterns = [
@@ -408,32 +516,26 @@ class FoodParser:
         
         return 0
     
-    def _clean_name(self, text):
-        """Очистка названия от веса и других числовых значений"""
-        # Удаляем вес и единицы измерения
-        text = re.sub(r'\d+\s*г(?:рамм)?', '', text)
-        text = re.sub(r'\d+\s*мл', '', text)
-        text = re.sub(r'\d+\s*л(?:итров?)?', '', text)
-        text = re.sub(r'\d+\s*шт', '', text)
-        text = re.sub(r'\d+\s*куск', '', text)
-        text = re.sub(r'\d+\s*порц', '', text)
-        text = re.sub(r'\d+\s*ложк[иа]?', '', text)
-        text = re.sub(r'\d+%', '', text)
-        
-        # Удаляем предлоги и лишние пробелы
-        text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'(с |со |из |на |в |для |и |или )', ' ', text)
-        
-        return text.strip()
-    
     def _guess_portion(self, food_name, food=None):
         """Угадывание стандартной порции"""
-        # Сначала проверяем, есть ли стандартная порция в базе
         if food and food.default_portion:
             return food.default_portion
         
-        # Если нет, используем эвристику
         portions = {
+            'арахис': 30,
+            'арахис соленый': 30,
+            'орехи': 30,
+            'грецкие орехи': 30,
+            'миндаль': 30,
+            'фундук': 30,
+            'кешью': 30,
+            'фисташки': 30,
+            'кедровые орехи': 20,
+            'пиво': 500,
+            'пиво светлое': 500,
+            'пиво темное': 500,
+            'пиво живое': 500,
+            'пиво безалкогольное': 500,
             'кофе': 200,
             'чай': 200,
             'сок': 200,
@@ -442,7 +544,6 @@ class FoodParser:
             'квас': 250,
             'лимонад': 250,
             'кола': 250,
-            'пиво': 500,
             'вино': 150,
             'водка': 50,
             'коньяк': 50,
@@ -459,7 +560,7 @@ class FoodParser:
             'хлеб': 30,
             'батон': 30,
             'лаваш': 50,
-            'яйца': 50,
+            'яйца': 100,
             'яблоко': 150,
             'банан': 150,
             'апельсин': 150,
@@ -515,12 +616,58 @@ class FoodParser:
             'варенье': 20,
             'мед': 20,
             'сахар': 7,
-            'орехи': 30,
-            'семечки': 30,
         }
         
+        # Ищем по ключевым словам
         for key, portion in portions.items():
             if key in food_name:
                 return portion
         
-        return 100  # По умолчанию 100г
+        return 100
+    
+    def _find_by_keywords(self, text):
+        """Поиск продукта по ключевым словам"""
+        keywords = {
+            'арахис': 'арахис',
+            'арахис соленый': 'арахис соленый',
+            'орехи': 'арахис',
+            'пиво': 'пиво светлое',
+            'творог': 'творог 5%',
+            'кефир': 'кефир 2.5%',
+            'молоко': 'молоко 2.5%',
+            'ряженка': 'ряженка',
+            'сметана': 'сметана 20%',
+            'сливки': 'сливки 20%',
+            'масло сливочное': 'масло сливочное',
+            'масло подсолнечное': 'масло подсолнечное',
+            'масло оливковое': 'масло оливковое',
+            'сыр': 'сыр российский',
+            'колбаса': 'колбаса вареная',
+            'колбаса копченая': 'колбаса копченая',
+            'ветчина': 'ветчина',
+            'сосиски': 'сосиски',
+            'курица': 'куриная грудка',
+            'индейка': 'индейка грудка',
+            'говядина': 'говядина',
+            'свинина': 'свинина',
+            'баранина': 'баранина',
+            'рыба': 'лосось',
+            'лосось': 'лосось',
+            'семга': 'семга',
+            'форель': 'форель',
+            'сельдь': 'сельдь',
+            'скумбрия': 'скумбрия',
+            'треска': 'треска',
+            'минтай': 'минтай',
+            'креветки': 'креветки',
+            'кальмар': 'кальмар',
+            'мидии': 'мидии',
+            'яйцо': 'яйца',
+            'яйца': 'яйца',
+        }
+        
+        for key, value in keywords.items():
+            if key in text:
+                return self.db.find_food(value)
+        
+        return None
