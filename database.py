@@ -17,7 +17,7 @@ class Database:
             session.close()
             return
             
-        print("Инициализация базы данных...")
+        print("🚀 Инициализация базы данных...")
         
         # Создаем категории
         categories = {}
@@ -37,7 +37,9 @@ class Database:
             ('sweets', 'Сладости'),
             ('soups', 'Супы'),
             ('salads', 'Салаты'),
-            ('bbq', 'Шашлык и гриль'),
+            ('main_dishes', 'Вторые блюда'),
+            ('fastfood', 'Фастфуд'),
+            ('international', 'Национальные блюда'),
             ('other', 'Другое'),
         ]
         
@@ -47,118 +49,111 @@ class Database:
             session.flush()
             categories[name] = cat.id
         
-        # Добавляем продукты (СОКРАЩЕННЫЙ СПИСОК ДЛЯ ТЕСТА)
-        foods = [
-            # Молочные
-            Food(name='cottage cheese 9%', name_ru='творог 9%', calories=169, proteins=18, fats=9, carbs=3, category_id=categories['dairy'], default_portion=150),
-            Food(name='cottage cheese 5%', name_ru='творог 5%', calories=145, proteins=21, fats=5, carbs=3, category_id=categories['dairy'], default_portion=150),
-            Food(name='milk 2.5%', name_ru='молоко 2.5%', calories=54, proteins=2.9, fats=2.5, carbs=4.7, category_id=categories['dairy'], is_liquid=True, default_portion=200),
-            Food(name='kefir 2.5%', name_ru='кефир 2.5%', calories=50, proteins=3, fats=2.5, carbs=4, category_id=categories['dairy'], is_liquid=True, default_portion=200),
-            Food(name='sour cream 20%', name_ru='сметана 20%', calories=206, proteins=2.5, fats=20, carbs=3, category_id=categories['dairy'], default_portion=20),
-            Food(name='butter', name_ru='масло сливочное', calories=748, proteins=0.5, fats=82.5, carbs=0.8, category_id=categories['dairy'], default_portion=10),
-            Food(name='cheese russian', name_ru='сыр российский', calories=363, proteins=24, fats=29, carbs=0, category_id=categories['dairy'], default_portion=30),
-            
-            # Мясо
-            Food(name='pork', name_ru='свинина', calories=320, proteins=14, fats=30, carbs=0, category_id=categories['meat'], default_portion=150),
-            Food(name='beef', name_ru='говядина', calories=218, proteins=19, fats=15, carbs=0, category_id=categories['meat'], default_portion=150),
-            Food(name='sausage boiled', name_ru='колбаса вареная', calories=250, proteins=12, fats=22, carbs=1.5, category_id=categories['meat'], default_portion=50),
-            Food(name='sausage smoked', name_ru='колбаса копченая', calories=400, proteins=16, fats=38, carbs=2, category_id=categories['meat'], default_portion=50),
-            
-            # Птица
-            Food(name='chicken breast', name_ru='куриная грудка', calories=165, proteins=31, fats=3.6, carbs=0, category_id=categories['poultry'], default_portion=150),
-            
-            # Рыба
-            Food(name='salmon', name_ru='лосось', calories=208, proteins=20, fats=13, carbs=0, category_id=categories['fish'], default_portion=150),
-            
-            # Яйца
-            Food(name='eggs', name_ru='яйца', calories=157, proteins=12.7, fats=11.5, carbs=0.7, category_id=categories['eggs'], default_portion=100),
-            
-            # Овощи
-            Food(name='potato', name_ru='картофель', calories=77, proteins=2, fats=0.4, carbs=16, category_id=categories['vegetables'], default_portion=200),
-            Food(name='cucumber', name_ru='огурец', calories=15, proteins=0.8, fats=0.1, carbs=3, category_id=categories['vegetables'], default_portion=100),
-            Food(name='tomato', name_ru='помидор', calories=18, proteins=0.9, fats=0.2, carbs=3.9, category_id=categories['vegetables'], default_portion=100),
-            Food(name='cabbage', name_ru='капуста', calories=25, proteins=1.8, fats=0.1, carbs=4.7, category_id=categories['vegetables'], default_portion=150),
-            Food(name='carrot', name_ru='морковь', calories=41, proteins=1.3, fats=0.1, carbs=7, category_id=categories['vegetables'], default_portion=100),
-            Food(name='onion', name_ru='лук', calories=40, proteins=1.1, fats=0.1, carbs=8.2, category_id=categories['vegetables'], default_portion=50),
-            
-            # Фрукты
-            Food(name='apple', name_ru='яблоко', calories=52, proteins=0.3, fats=0.2, carbs=11.4, category_id=categories['fruits'], default_portion=150),
-            Food(name='banana', name_ru='банан', calories=95, proteins=1.5, fats=0.2, carbs=21.8, category_id=categories['fruits'], default_portion=150),
-            Food(name='orange', name_ru='апельсин', calories=43, proteins=0.9, fats=0.2, carbs=8.1, category_id=categories['fruits'], default_portion=150),
+        # Добавляем базовый набор продуктов (остальное добавится через парсер)
+        base_foods = [
+            # Несколько основных продуктов для теста
             Food(name='avocado', name_ru='авокадо', calories=160, proteins=2, fats=15, carbs=6, category_id=categories['fruits'], default_portion=100),
-            
-            # Крупы
-            Food(name='buckwheat', name_ru='гречка', calories=343, proteins=13, fats=3.3, carbs=68, category_id=categories['grains'], default_portion=200),
-            Food(name='rice', name_ru='рис', calories=344, proteins=6.7, fats=0.7, carbs=78, category_id=categories['grains'], default_portion=200),
-            Food(name='oatmeal', name_ru='овсянка', calories=366, proteins=12, fats=6, carbs=62, category_id=categories['grains'], default_portion=200),
-            Food(name='pasta', name_ru='макароны', calories=350, proteins=12, fats=1.5, carbs=72, category_id=categories['grains'], default_portion=200),
-            
-            # Хлеб
-            Food(name='bread white', name_ru='хлеб белый', calories=265, proteins=9, fats=3.2, carbs=49, category_id=categories['bakery'], default_portion=30),
-            Food(name='bread rye', name_ru='хлеб ржаной', calories=200, proteins=6.6, fats=1.2, carbs=34, category_id=categories['bakery'], default_portion=30),
-            
-            # Масла
-            Food(name='oil sunflower', name_ru='масло подсолнечное', calories=899, proteins=0, fats=99.9, carbs=0, category_id=categories['fats'], default_portion=10),
-            Food(name='oil olive', name_ru='масло оливковое', calories=898, proteins=0, fats=99.8, carbs=0, category_id=categories['fats'], default_portion=10),
-            
-            # Орехи
+            Food(name='salad_olivier', name_ru='салат оливье', calories=200, proteins=5, fats=15, carbs=10, category_id=categories['salads'], default_portion=200),
+            Food(name='borscht', name_ru='борщ', calories=50, proteins=2, fats=2, carbs=6, category_id=categories['soups'], default_portion=300),
+            Food(name='beer_light', name_ru='пиво светлое', calories=42, proteins=0.4, fats=0, carbs=3.5, category_id=categories['drinks'], is_liquid=True, default_portion=500),
             Food(name='peanuts', name_ru='арахис', calories=552, proteins=26, fats=45, carbs=10, category_id=categories['nuts'], default_portion=30),
-            Food(name='peanuts salted', name_ru='арахис соленый', calories=580, proteins=24, fats=48, carbs=12, category_id=categories['nuts'], default_portion=30),
-            Food(name='walnuts', name_ru='грецкие орехи', calories=654, proteins=15, fats=65, carbs=14, category_id=categories['nuts'], default_portion=30),
-            
-            # Напитки
             Food(name='coffee', name_ru='кофе', calories=2, proteins=0.1, fats=0, carbs=0.3, category_id=categories['drinks'], is_liquid=True, default_portion=200),
-            Food(name='tea black', name_ru='чай черный', calories=1, proteins=0, fats=0, carbs=0.3, category_id=categories['drinks'], is_liquid=True, default_portion=200),
             Food(name='sugar', name_ru='сахар', calories=387, proteins=0, fats=0, carbs=99.8, category_id=categories['sweets'], default_portion=7),
-            Food(name='beer light', name_ru='пиво светлое', calories=42, proteins=0.4, fats=0, carbs=3.5, category_id=categories['drinks'], is_liquid=True, default_portion=500),
-            Food(name='beer dark', name_ru='пиво темное', calories=48, proteins=0.5, fats=0, carbs=4, category_id=categories['drinks'], is_liquid=True, default_portion=500),
-            
-            # Супы
-            Food(name='borscht', name_ru='борщ', calories=50, proteins=2, fats=2, carbs=6, category_id=categories['soups'], is_liquid=True, default_portion=300),
-            
-            # Салаты
-            Food(name='salad olivier', name_ru='салат оливье', calories=200, proteins=5, fats=15, carbs=10, category_id=categories['salads'], default_portion=200),
-            Food(name='salad caesar', name_ru='салат цезарь', calories=180, proteins=8, fats=10, carbs=8, category_id=categories['salads'], default_portion=200),
-            
-            # Шашлык
-            Food(name='shashlik pork', name_ru='шашлык из свинины', calories=280, proteins=15, fats=24, carbs=1, category_id=categories['bbq'], default_portion=200),
-            Food(name='shashlik chicken', name_ru='шашлык из курицы', calories=160, proteins=22, fats=7, carbs=1, category_id=categories['bbq'], default_portion=200),
         ]
         
-        for food in foods:
+        for food in base_foods:
             session.add(food)
         
         session.commit()
-        print(f"✅ Добавлено продуктов: {len(foods)}")
+        print(f"✅ Добавлено базовых продуктов: {len(base_foods)}")
         session.close()
     
     def find_food(self, name):
-        """Поиск продукта"""
+        """
+        БЫСТРЫЙ поиск продукта
+        Возвращает Food объект или None
+        """
         session = self.Session()
         name = name.lower().strip()
         
-        # Точное совпадение
+        # 1. Точное совпадение (самое быстрое)
         food = session.query(Food).filter(Food.name_ru == name).first()
         if food:
             session.close()
             return food
         
-        # Частичное совпадение
+        # 2. Поиск по вхождению (like)
         foods = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).all()
+        
         if foods:
-            # Сортируем по длине (самое короткое - самое точное)
+            # Сортируем по длине (самое короткое совпадение = самое точное)
             foods.sort(key=lambda x: len(x.name_ru))
             session.close()
             return foods[0]
         
-        # Поиск по английскому названию
-        food = session.query(Food).filter(Food.name.ilike(f'%{name}%')).first()
-        if food:
-            session.close()
-            return food
+        # 3. Поиск по словам
+        words = name.split()
+        for word in words:
+            if len(word) > 2:  # Игнорируем короткие слова
+                food = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).first()
+                if food:
+                    session.close()
+                    return food
         
         session.close()
         return None
+    
+    def find_food_fuzzy(self, name):
+        """
+        НЕЧЕТКИЙ поиск (если точный не сработал)
+        Использует LIKE для поиска похожих названий
+        """
+        session = self.Session()
+        name = name.lower().strip()
+        
+        # Разбиваем на слова
+        words = name.split()
+        query = session.query(Food)
+        
+        for word in words:
+            if len(word) > 2:
+                query = query.filter(Food.name_ru.ilike(f'%{word}%'))
+        
+        foods = query.limit(5).all()
+        session.close()
+        
+        if foods:
+            return foods[0]
+        return None
+    
+    def add_food_from_user(self, name, calories=None, proteins=None, fats=None, carbs=None):
+        """
+        Добавление продукта пользователем
+        """
+        session = self.Session()
+        
+        # Проверяем, нет ли уже такого
+        existing = session.query(Food).filter(Food.name_ru == name).first()
+        if existing:
+            session.close()
+            return existing
+        
+        # Создаем новый продукт с базовыми значениями
+        new_food = Food(
+            name=name.lower().replace(' ', '_'),
+            name_ru=name,
+            calories=calories or 100,
+            proteins=proteins or 5,
+            fats=fats or 5,
+            carbs=carbs or 10,
+            category_id=1,  # other
+            default_portion=100
+        )
+        
+        session.add(new_food)
+        session.commit()
+        session.close()
+        return new_food
     
     def add_meal(self, telegram_id, food_name, weight, meal_type='breakfast'):
         """Добавление приема пищи"""
@@ -166,8 +161,8 @@ class Database:
         food = self.find_food(food_name)
         
         if not food:
-            session.close()
-            return None
+            # Если не нашли, создаем временный продукт
+            food = self.add_food_from_user(food_name)
         
         meal = MealEntry(
             user_id=telegram_id,

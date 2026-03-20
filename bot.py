@@ -3,8 +3,10 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from database import Database
 from food_parser import FoodParser
-from config import BOT_TOKEN
+from config import BOT_TOKEN, ADMIN_IDS
 from datetime import datetime
+import threading
+import os
 
 # Настройка логирования
 logging.basicConfig(
@@ -18,7 +20,11 @@ db = Database()
 db.init_database()
 parser = FoodParser()
 
+# Флаг для отслеживания обновления базы
+db_updating = False
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик команды /start"""
     user_id = update.effective_user.id
     
     user = db.get_user(user_id)
@@ -26,13 +32,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.create_user(user_id)
         await update.message.reply_text(
             "👋 Привет! Я бот для подсчета КБЖУ.\n\n"
-            "📝 Просто напиши мне, что ты съел(а), например:\n"
+            "📝 Просто напиши мне, что ты съел(а):\n"
             "• 100г творог 9%\n"
             "• бутерброд с колбасой\n"
-            "• кофе 3 ложки сахара\n"
+            "• кофе 2 ложки сахара\n"
             "• тарелка борща со сметаной\n"
-            "• шашлык из свинины 200г\n"
-            "• салат оливье\n"
+            "• шашлык 200г\n"
             "• 3 литра пива, 100 гр арахиса\n\n"
             "Для настройки дневной нормы используй /settings\n"
             "Для статистики за день используй /stats"
@@ -40,7 +45,71 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("👋 Что сегодня ел(а)?")
 
+async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для админа - обновление базы продуктов"""
+    user_id = update.effective_user.id
+    
+    # Проверяем, является ли пользователь админом
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+        return
+    
+    global db_updating
+    if db_updating:
+        await update.message.reply_text("🔄 Обновление базы уже выполняется. Подождите...")
+        return
+    
+    await update.message.reply_text("🚀 Начинаю обновление базы продуктов...\n⏱️ Это займет 10-20 минут.")
+    
+    # Запускаем обновление в отдельном потоке
+    def run_update():
+        global db_updating
+        db_updating = True
+        try:
+            from update_foods import update_database
+            result = update_database()
+            # Отправляем результат в том же потоке
+            context.bot.send_message(
+                chat_id=user_id,
+                text=result
+            )
+        except Exception as e:
+            context.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ Ошибка при обновлении: {str(e)}"
+            )
+        finally:
+            db_updating = False
+    
+    thread = threading.Thread(target=run_update)
+    thread.start()
+
+async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для админа - статус базы"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+        return
+    
+    from database import Database
+    db_local = Database()
+    session = db_local.Session()
+    
+    from models import Food
+    food_count = session.query(Food).count()
+    
+    session.close()
+    
+    await update.message.reply_text(
+        f"📊 Статус базы данных:\n"
+        f"🍎 Всего продуктов: {food_count}\n"
+        f"🔄 Обновление: {'выполняется' if db_updating else 'не выполняется'}\n\n"
+        f"Чтобы обновить базу, используй /admin_update_db"
+    )
+
 async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Настройка параметров пользователя"""
     keyboard = [
         [InlineKeyboardButton("⚖️ Вес", callback_data='set_weight')],
         [InlineKeyboardButton("📏 Рост", callback_data='set_height')],
@@ -52,6 +121,7 @@ async def settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚙️ Настройки:", reply_markup=reply_markup)
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика за сегодня"""
     user_id = update.effective_user.id
     summary = db.get_daily_summary(user_id)
     
@@ -94,6 +164,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик нажатий на кнопки"""
     query = update.callback_query
     await query.answer()
     
@@ -134,12 +205,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             await query.edit_message_text("❌ Норма не рассчитана. Заполните параметры.")
+    elif query.data.startswith('meal_'):
+        meal_type = query.data.replace('meal_', '')
+        meal_names = {
+            'breakfast': 'завтрак',
+            'lunch': 'обед',
+            'dinner': 'ужин',
+            'snack': 'перекус'
+        }
+        context.user_data['meal_type'] = meal_type
+        await query.edit_message_text(f"🍽 Что вы съели на {meal_names[meal_type]}?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка сообщений от пользователя"""
     user_id = update.effective_user.id
     text = update.message.text
-    
-    print(f"\n📨 Получено: {text}")
     
     if 'awaiting' in context.user_data:
         await handle_parameter_input(update, context)
@@ -148,13 +228,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Парсим сообщение
     food_items = parser.parse_message(text)
     
-    print(f"📦 Распознано: {len(food_items)}")
-    for item in food_items:
-        print(f"   - {item['name']}: {item['weight']}г")
-    
     if not food_items:
         await update.message.reply_text(
-            "😕 Не удалось распознать продукты. Попробуйте написать по-другому."
+            "😕 Не удалось распознать продукты. Попробуйте:\n"
+            "• 100г творог 9%\n"
+            "• бутерброд с колбасой\n"
+            "• кофе 2 ложки сахара\n"
+            "• тарелка борща\n"
+            "• шашлык 200г\n"
+            "• 3 литра пива, 100 гр арахиса"
         )
         return
     
@@ -177,7 +259,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not meal_items:
         await update.message.reply_text(
-            "😕 Не удалось найти продукты в базе. Попробуйте написать точнее."
+            "😕 Не удалось найти продукты в базе.\n"
+            "Попробуйте написать точнее или подождите обновления базы."
         )
         return
     
@@ -227,6 +310,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response, reply_markup=reply_markup)
 
 async def handle_parameter_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка ввода параметров пользователя"""
     user_id = update.effective_user.id
     text = update.message.text
     
@@ -270,15 +354,29 @@ async def handle_parameter_input(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("❌ Пожалуйста, введите число")
 
 def main():
+    """Запуск бота"""
     application = Application.builder().token(BOT_TOKEN).build()
     
+    # Команды для всех
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CommandHandler("stats", stats))
+    
+    # Команды для админа
+    application.add_handler(CommandHandler("admin_update_db", admin_update_db))
+    application.add_handler(CommandHandler("admin_status", admin_status))
+    
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("🚀 Бот запущен...")
+    print("📝 Команды:")
+    print("   /start - начать работу")
+    print("   /settings - настройки")
+    print("   /stats - статистика")
+    print("   /admin_update_db - обновить базу (только админ)")
+    print("   /admin_status - статус базы (только админ)")
+    
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
