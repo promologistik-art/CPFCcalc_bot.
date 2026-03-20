@@ -22,6 +22,8 @@ class FoodParser:
         results = []
         
         for part in parts:
+            print(f"Обработка части: '{part}'")  # отладка
+            
             # Проверяем, есть ли в части "и" (но не в составе названий)
             if ' и ' in part and not self._has_complex_dish(part):
                 subparts = part.split(' и ')
@@ -42,7 +44,17 @@ class FoodParser:
         if not text:
             return []
         
-        # Проверяем конкретные названия (важно: порядок имеет значение!)
+        print(f"  Парсинг: '{text}'")  # отладка
+        
+        # ВАЖНО: сначала проверяем специфические паттерны с ложками
+        if 'ложек' in text or 'ложки' in text or 'ложка' in text:
+            # Проверяем, есть ли сахар
+            sugar_match = re.search(r'(\d+)\s*ложк[иае]?\s*сахар', text)
+            if sugar_match:
+                print(f"    Найдено: {sugar_match.group(0)}")  # отладка
+                return self._parse_sugar(text)
+        
+        # Проверяем конкретные названия
         if 'салат оливье' in text:
             return self._create_product('салат оливье', text, 200)
         if 'салат цезарь' in text:
@@ -85,6 +97,17 @@ class FoodParser:
         
         # Обычный продукт
         return self._parse_simple_food(text)
+    
+    def _parse_sugar(self, text):
+        """Специальный парсинг для сахара в ложках"""
+        # Ищем количество ложек
+        match = re.search(r'(\d+)\s*ложк[иае]?\s*сахар', text)
+        if match:
+            spoons = int(match.group(1))
+            weight = spoons * 7  # 1 ложка сахара = 7г
+            print(f"    Сахар: {spoons} ложек = {weight}г")  # отладка
+            return [{'name': 'сахар', 'weight': weight}]
+        return []
     
     def _create_product(self, name, text, default_weight):
         """Создает продукт с весом"""
@@ -204,35 +227,41 @@ class FoodParser:
     
     def _parse_coffee(self, text):
         """Парсинг кофе"""
+        # Сначала ищем сахар отдельно, чтобы он не попал в очистку
+        sugar_items = []
+        if 'ложек' in text or 'ложки' in text:
+            sugar_match = re.search(r'(\d+)\s*ложк[иае]?\s*сахар', text)
+            if sugar_match:
+                sugar_items = self._parse_sugar(text)
+                # Удаляем сахар из текста для очистки названия кофе
+                text = re.sub(r'\d+\s*ложк[иае]?\s*сахар', '', text)
+        
         weight = self._extract_weight(text)
         if weight == 0:
             weight = 200
         
         products = [{'name': 'кофе', 'weight': weight}]
-        
-        # Сахар
-        sugar_match = re.search(r'(\d+)\s*ложк[иа]?\s*сахар', text)
-        if sugar_match:
-            spoons = int(sugar_match.group(1))
-            products.append({'name': 'сахар', 'weight': spoons * 7})
-        elif 'сахар' in text and 'без сахара' not in text:
-            products.append({'name': 'сахар', 'weight': 7})
+        products.extend(sugar_items)
         
         return products
     
     def _parse_tea(self, text):
         """Парсинг чая"""
+        # Сначала ищем сахар отдельно
+        sugar_items = []
+        if 'ложек' in text or 'ложки' in text:
+            sugar_match = re.search(r'(\d+)\s*ложк[иае]?\s*сахар', text)
+            if sugar_match:
+                sugar_items = self._parse_sugar(text)
+                # Удаляем сахар из текста
+                text = re.sub(r'\d+\s*ложк[иае]?\s*сахар', '', text)
+        
         weight = self._extract_weight(text)
         if weight == 0:
             weight = 200
         
         products = [{'name': 'чай черный', 'weight': weight}]
-        
-        # Сахар
-        sugar_match = re.search(r'(\d+)\s*ложк[иа]?\s*сахар', text)
-        if sugar_match:
-            spoons = int(sugar_match.group(1))
-            products.append({'name': 'сахар', 'weight': spoons * 7})
+        products.extend(sugar_items)
         
         return products
     
@@ -269,7 +298,8 @@ class FoodParser:
         text = re.sub(r'\d+\s*мл', '', text)
         text = re.sub(r'\d+\s*л(?:итр(?:а|ов)?)?', '', text)
         text = re.sub(r'\d+\s*шт', '', text)
-        text = re.sub(r'\d+\s*ложк[иа]?', '', text)
+        # НЕ удаляем "ложки" целиком, только если это отдельно стоящее слово
+        text = re.sub(r'\b\d+\s*ложк[иае]?\b', '', text)
         
         # Удаляем лишние пробелы
         text = re.sub(r'\s+', ' ', text)
