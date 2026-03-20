@@ -1,12 +1,11 @@
 import logging
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from database import Database
 from food_parser import FoodParser
 from config import BOT_TOKEN, ADMIN_IDS
 from datetime import datetime
-import threading
-import os
 
 # Настройка логирования
 logging.basicConfig(
@@ -61,22 +60,24 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("🚀 Начинаю обновление базы продуктов...\n⏱️ Это займет 10-20 минут.")
     
-    # Запускаем обновление в отдельном потоке
     def run_update():
         global db_updating
         db_updating = True
         try:
             from update_foods import update_database
-            result = update_database()
-            # Отправляем результат в том же потоке
-            context.bot.send_message(
+            
+            # Передаем bot и chat_id для отправки сообщений
+            result = update_database(
                 chat_id=user_id,
-                text=result
+                bot=context.bot
             )
+            
+            print(f"Обновление завершено: {result}")
+            
         except Exception as e:
             context.bot.send_message(
                 chat_id=user_id,
-                text=f"❌ Ошибка при обновлении: {str(e)}"
+                text=f"❌ Критическая ошибка: {str(e)}"
             )
         finally:
             db_updating = False

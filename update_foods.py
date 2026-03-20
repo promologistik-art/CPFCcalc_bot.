@@ -5,30 +5,50 @@
 """
 import requests
 from bs4 import BeautifulSoup
-import json
 import time
 import sqlite3
-from urllib.parse import urljoin
-import re
 import os
+import re
+from urllib.parse import urljoin
 
-def update_database():
+# Глобальная переменная для хранения функции отправки сообщений
+send_callback = None
+
+def set_send_callback(callback):
+    """Устанавливает функцию для отправки сообщений в Telegram"""
+    global send_callback
+    send_callback = callback
+
+def send_message(text):
+    """Отправляет сообщение через callback"""
+    global send_callback
+    if send_callback:
+        try:
+            send_callback(text)
+        except Exception as e:
+            print(f"Ошибка отправки: {e}")
+    print(text)
+
+def update_database(chat_id=None, bot=None):
     """
     Обновление базы данных продуктами
-    Возвращает строку с результатом для отправки в Telegram
+    Если передан bot и chat_id, отправляет сообщения в Telegram
     """
     try:
-        print("🚀 Начинаю обновление базы...")
+        # Если есть bot, устанавливаем callback
+        if bot and chat_id:
+            set_send_callback(lambda msg: bot.send_message(chat_id=chat_id, text=msg))
         
-        # Парсим и сохраняем
+        send_message("🚀 Начинаю обновление базы...")
         result = parse_calorizator()
         
-        print("✅ Обновление завершено")
+        send_message(f"✅ {result}")
         return result
         
     except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return f"❌ Ошибка при обновлении: {str(e)}"
+        error_msg = f"❌ Ошибка: {str(e)}"
+        send_message(error_msg)
+        return error_msg
 
 def parse_calorizator():
     """Парсинг calorizator.ru"""
@@ -37,12 +57,16 @@ def parse_calorizator():
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
-    print("📡 Получаем список категорий...")
+    send_message("📡 Получаю список категорий...")
     
     # Получаем список категорий
     url = f"{base_url}/product"
-    response = requests.get(url, headers=headers)
-    soup = BeautifulSoup(response.text, 'html.parser')
+    try:
+        response = requests.get(url, headers=headers, timeout=30)
+        soup = BeautifulSoup(response.text, 'html.parser')
+    except Exception as e:
+        send_message(f"❌ Не удалось загрузить страницу: {e}")
+        return "Не удалось подключиться к calorizator.ru"
     
     categories = []
     category_links = soup.select('div.item-list ul li a')
@@ -53,22 +77,26 @@ def parse_calorizator():
         if cat_name and 'product' in cat_url:
             categories.append((cat_name, cat_url))
     
-    print(f"📁 Найдено категорий: {len(categories)}")
+    send_message(f"📁 Найдено категорий: {len(categories)}")
     
     total_products = 0
     
-    for cat_name, cat_url in categories:
-        print(f"\n📂 Парсим: {cat_name}")
+    for idx, (cat_name, cat_url) in enumerate(categories):
+        send_message(f"\n📂 [{idx+1}/{len(categories)}] Парсинг: {cat_name}")
+        
         products = parse_category(cat_url, cat_name, headers, base_url)
         total_products += len(products)
-        print(f"   ✅ Найдено продуктов: {len(products)}")
         
-        # Сохраняем в базу после каждой категории
-        save_to_sqlite(products)
+        if products:
+            send_message(f"   ✅ Найдено продуктов: {len(products)}")
+            saved = save_to_sqlite(products)
+            send_message(f"   💾 Добавлено в БД: {saved}")
+        else:
+            send_message(f"   ⚠️ Продуктов не найдено")
         
         time.sleep(1)  # Пауза между категориями
     
-    return f"✅ Обновление завершено!\n📊 Добавлено продуктов: {total_products}"
+    return f"Обновление завершено! Добавлено продуктов: {total_products}"
 
 def parse_category(category_url, category_name, headers, base_url):
     """Парсит категорию"""
@@ -77,16 +105,14 @@ def parse_category(category_url, category_name, headers, base_url):
     
     while True:
         url = f"{category_url}?page={page}" if page > 1 else category_url
-        print(f"   Страница {page}...", end=" ")
         
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=30)
             soup = BeautifulSoup(response.text, 'html.parser')
             
             product_rows = soup.select('table.views-table tbody tr')
             
             if not product_rows:
-                print("пусто")
                 break
             
             page_products = 0
@@ -103,13 +129,16 @@ def parse_category(category_url, category_name, headers, base_url):
                             products.append(product_data)
                             page_products += 1
                         
-                        time.sleep(0.5)  # Небольшая пауза между запросами
+                        time.sleep(0.3)  # Небольшая пауза
             
-            print(f"✅ {page_products} продуктов")
+            send_message(f"   Страница {page}: +{page_products} продуктов")
             page += 1
             
+        except requests.exceptions.Timeout:
+            send_message(f"   ⚠️ Таймаут на странице {page}, пропускаем")
+            break
         except Exception as e:
-            print(f"❌ Ошибка: {e}")
+            send_message(f"   ⚠️ Ошибка: {e}")
             break
     
     return products
@@ -117,10 +146,9 @@ def parse_category(category_url, category_name, headers, base_url):
 def parse_product_page(product_url, product_name, category_name, headers):
     """Парсит страницу продукта"""
     try:
-        response = requests.get(product_url, headers=headers)
+        response = requests.get(product_url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Ищем таблицу с пищевой ценностью
         nutrition_table = soup.find('table', class_='nutrition-info')
         if not nutrition_table:
             nutrition_table = soup.find('table', class_='views-table')
@@ -140,8 +168,7 @@ def parse_product_page(product_url, product_name, category_name, headers):
                 'carbs': carbs,
             }
         
-    except Exception as e:
-        # Не печатаем каждую ошибку, чтобы не засорять лог
+    except:
         pass
     
     return None
@@ -167,12 +194,9 @@ def save_to_sqlite(products):
     """Сохраняет продукты в SQLite"""
     db_path = 'kbju_bot.db'
     
-    # Проверяем, существует ли база
     if not os.path.exists(db_path):
-        print("   ⚠️ База данных не найдена, создаем...")
-        from database import Database
-        db = Database()
-        db.init_database()
+        send_message("   ⚠️ База данных не найдена")
+        return 0
     
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -182,10 +206,7 @@ def save_to_sqlite(products):
     categories = {name: id for id, name in cursor.fetchall()}
     
     added = 0
-    skipped = 0
-    
     for p in products:
-        # Определяем категорию
         cat_name = map_category(p['category'])
         category_id = categories.get(cat_name, 1)  # 1 = other
         
@@ -204,17 +225,13 @@ def save_to_sqlite(products):
                 p['fat'],
                 p['carbs'],
                 category_id,
-                guess_portion(p['name'])
+                100
             ))
             added += 1
-        else:
-            skipped += 1
     
     conn.commit()
     conn.close()
-    
-    if added > 0:
-        print(f"   💾 Добавлено в БД: {added} продуктов (пропущено: {skipped})")
+    return added
 
 def map_category(cat_name):
     """Маппинг категорий с calorizator.ru на категории бота"""
@@ -239,69 +256,6 @@ def map_category(cat_name):
         'Фаст-фуд': 'fastfood',
     }
     return mapping.get(cat_name, 'other')
-
-def guess_portion(name):
-    """Определяет стандартную порцию по названию"""
-    name_lower = name.lower()
-    
-    portions = {
-        'творог': 150,
-        'молоко': 200,
-        'кефир': 200,
-        'йогурт': 150,
-        'сметана': 20,
-        'масло': 10,
-        'хлеб': 30,
-        'батон': 30,
-        'булка': 50,
-        'сыр': 30,
-        'колбаса': 50,
-        'сосиски': 50,
-        'ветчина': 50,
-        'яйцо': 50,
-        'яйца': 100,
-        'яблоко': 150,
-        'банан': 150,
-        'апельсин': 150,
-        'мандарин': 100,
-        'груша': 150,
-        'виноград': 150,
-        'клубника': 150,
-        'малина': 150,
-        'авокадо': 100,
-        'картофель': 200,
-        'картошка': 200,
-        'гречка': 200,
-        'рис': 200,
-        'овсянка': 200,
-        'каша': 200,
-        'макароны': 200,
-        'паста': 200,
-        'кофе': 200,
-        'чай': 200,
-        'сахар': 7,
-        'пиво': 500,
-        'вино': 150,
-        'борщ': 300,
-        'суп': 300,
-        'салат': 200,
-        'шашлык': 200,
-        'пельмени': 200,
-        'вареники': 200,
-        'блины': 150,
-        'котлеты': 150,
-        'шоколад': 20,
-        'конфеты': 15,
-        'печенье': 30,
-        'арахис': 30,
-        'орехи': 30,
-    }
-    
-    for key, portion in portions.items():
-        if key in name_lower:
-            return portion
-    
-    return 100
 
 if __name__ == "__main__":
     # Для запуска из командной строки
