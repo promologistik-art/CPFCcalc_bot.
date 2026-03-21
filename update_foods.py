@@ -10,34 +10,41 @@ import sqlite3
 import os
 import re
 from urllib.parse import urljoin
+import asyncio
 
 # Глобальная переменная для хранения функции отправки сообщений
 send_callback = None
+loop = None
 
-def set_send_callback(callback):
+def set_send_callback(callback, event_loop=None):
     """Устанавливает функцию для отправки сообщений в Telegram"""
-    global send_callback
+    global send_callback, loop
     send_callback = callback
+    loop = event_loop
 
 def send_message(text):
-    """Отправляет сообщение через callback"""
-    global send_callback
-    if send_callback:
+    """Отправляет сообщение через callback (синхронная обертка)"""
+    global send_callback, loop
+    if send_callback and loop:
         try:
-            send_callback(text)
+            # Запускаем асинхронную функцию в существующем цикле
+            asyncio.run_coroutine_threadsafe(send_callback(text), loop)
         except Exception as e:
             print(f"Ошибка отправки: {e}")
     print(text)
 
-def update_database(chat_id=None, bot=None):
+def update_database(chat_id=None, bot=None, event_loop=None):
     """
     Обновление базы данных продуктами
     Если передан bot и chat_id, отправляет сообщения в Telegram
     """
     try:
         # Если есть bot, устанавливаем callback
-        if bot and chat_id:
-            set_send_callback(lambda msg: bot.send_message(chat_id=chat_id, text=msg))
+        if bot and chat_id and event_loop:
+            set_send_callback(
+                lambda msg: bot.send_message(chat_id=chat_id, text=msg),
+                event_loop
+            )
         
         send_message("🚀 Начинаю обновление базы...")
         result = parse_calorizator()

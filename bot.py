@@ -1,5 +1,6 @@
 import logging
 import threading
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from database import Database
@@ -66,19 +67,34 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             from update_foods import update_database
             
-            # Передаем bot и chat_id для отправки сообщений
+            # Получаем текущий event loop
+            try:
+                event_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(event_loop)
+            
+            # Передаем bot, chat_id и event_loop
             result = update_database(
                 chat_id=user_id,
-                bot=context.bot
+                bot=context.bot,
+                event_loop=event_loop
             )
             
             print(f"Обновление завершено: {result}")
             
         except Exception as e:
-            context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ Критическая ошибка: {str(e)}"
-            )
+            import traceback
+            traceback.print_exc()
+            try:
+                # Пробуем отправить сообщение об ошибке через синхронный вызов
+                import requests
+                requests.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    json={"chat_id": user_id, "text": f"❌ Критическая ошибка: {str(e)}"}
+                )
+            except:
+                pass
         finally:
             db_updating = False
     
