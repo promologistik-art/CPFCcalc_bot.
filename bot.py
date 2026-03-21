@@ -1,6 +1,7 @@
 import logging
 import threading
 import asyncio
+import time
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from database import Database
@@ -44,6 +45,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text("👋 Что сегодня ел(а)?")
+
+async def admin_parse_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Диагностика страницы для отладки парсера"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Нет прав.")
+        return
+    
+    await update.message.reply_text("🔍 Анализирую страницу...")
+    
+    import requests
+    from bs4 import BeautifulSoup
+    
+    url = "https://calorizator.ru/product/all?page=0"
+    
+    try:
+        response = requests.get(url, timeout=30)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Показываем структуру
+        await update.message.reply_text(f"✅ Страница загружена: {len(response.text)} символов")
+        
+        # Ищем div с классом view-content
+        view_content = soup.find('div', class_='view-content')
+        if view_content:
+            await update.message.reply_text("✅ Найден div.view-content")
+            
+            # Ищем все строки внутри
+            rows = view_content.find_all('div', class_='views-row')
+            await update.message.reply_text(f"📋 Найдено views-row: {len(rows)}")
+            
+            if rows:
+                # Показываем первые 3 продукта
+                for i, row in enumerate(rows[:3]):
+                    # Ищем название
+                    title = row.find('div', class_='views-field-title')
+                    if title:
+                        name = title.text.strip()
+                        await update.message.reply_text(f"Продукт {i+1}: {name}")
+                    
+                    # Ищем КБЖУ
+                    fields = row.find_all('div', class_='views-field')
+                    for field in fields:
+                        field_text = field.text.strip()
+                        if 'ккал' in field_text or 'Белки' in field_text:
+                            await update.message.reply_text(f"  {field_text[:100]}")
+        else:
+            await update.message.reply_text("❌ div.view-content не найден")
+            
+        # Показываем первые 2000 символов HTML
+        await update.message.reply_text(f"📄 HTML первых 2000 символов:\n{response.text[:2000]}")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
 
 async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для админа - обновление базы продуктов"""
@@ -373,6 +429,7 @@ def main():
     # Команды для админа
     application.add_handler(CommandHandler("admin_update_db", admin_update_db))
     application.add_handler(CommandHandler("admin_status", admin_status))
+    application.add_handler(CommandHandler("admin_parse_debug", admin_parse_debug))
     
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -384,6 +441,7 @@ def main():
     print("   /stats - статистика")
     print("   /admin_update_db - обновить базу (только админ)")
     print("   /admin_status - статус базы (только админ)")
+    print("   /admin_parse_debug - диагностика парсера (только админ)")
     
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
