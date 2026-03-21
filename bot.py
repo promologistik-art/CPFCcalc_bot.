@@ -64,38 +64,48 @@ async def admin_parse_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = requests.get(url, timeout=30)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Показываем структуру
         await update.message.reply_text(f"✅ Страница загружена: {len(response.text)} символов")
         
-        # Ищем div с классом view-content
-        view_content = soup.find('div', class_='view-content')
-        if view_content:
-            await update.message.reply_text("✅ Найден div.view-content")
-            
-            # Ищем все строки внутри
-            rows = view_content.find_all('div', class_='views-row')
-            await update.message.reply_text(f"📋 Найдено views-row: {len(rows)}")
+        # Ищем таблицу напрямую
+        tables = soup.find_all('table')
+        await update.message.reply_text(f"📊 Найдено таблиц: {len(tables)}")
+        
+        if tables:
+            for i, table in enumerate(tables[:2]):
+                # Ищем строки в таблице
+                rows = table.find_all('tr')
+                await update.message.reply_text(f"   Таблица {i+1}: {len(rows)} строк")
+                
+                if rows:
+                    # Показываем заголовки
+                    headers = rows[0].find_all('th')
+                    if headers:
+                        header_text = " | ".join([h.text.strip()[:15] for h in headers])
+                        await update.message.reply_text(f"   Заголовки: {header_text}")
+                    
+                    # Показываем первые 3 строки данных
+                    for j, row in enumerate(rows[1:4]):
+                        cols = row.find_all('td')
+                        if cols:
+                            row_text = " | ".join([c.text.strip()[:30] for c in cols[:5]])
+                            await update.message.reply_text(f"   Строка {j+1}: {row_text}")
+        
+        # Если таблиц нет, ищем другие контейнеры
+        if not tables:
+            # Ищем div с классом views-row
+            rows = soup.find_all('div', class_='views-row')
+            await update.message.reply_text(f"📋 views-row: {len(rows)}")
             
             if rows:
-                # Показываем первые 3 продукта
                 for i, row in enumerate(rows[:3]):
-                    # Ищем название
-                    title = row.find('div', class_='views-field-title')
-                    if title:
-                        name = title.text.strip()
-                        await update.message.reply_text(f"Продукт {i+1}: {name}")
-                    
-                    # Ищем КБЖУ
-                    fields = row.find_all('div', class_='views-field')
-                    for field in fields:
-                        field_text = field.text.strip()
-                        if 'ккал' in field_text or 'Белки' in field_text:
-                            await update.message.reply_text(f"  {field_text[:100]}")
-        else:
-            await update.message.reply_text("❌ div.view-content не найден")
+                    await update.message.reply_text(f"   Строка {i+1}: {row.text[:200]}")
             
-        # Показываем первые 2000 символов HTML
-        await update.message.reply_text(f"📄 HTML первых 2000 символов:\n{response.text[:2000]}")
+            # Ищем div с классом node
+            nodes = soup.find_all('div', class_='node')
+            await update.message.reply_text(f"📋 node: {len(nodes)}")
+            
+        # Показываем HTML первых 3000 символов
+        await update.message.reply_text(f"📄 HTML первых 3000 символов:\n{response.text[:3000]}")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
