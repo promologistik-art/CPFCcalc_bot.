@@ -49,7 +49,6 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для админа - обновление базы продуктов"""
     user_id = update.effective_user.id
     
-    # Проверяем, является ли пользователь админом
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
         return
@@ -67,7 +66,7 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             from update_foods import update_database
             
-            # Передаем токен и chat_id для отправки сообщений
+            # Передаем токен и chat_id
             result = update_database(
                 bot_token=BOT_TOKEN,
                 chat_id=user_id
@@ -79,7 +78,6 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
             import traceback
             traceback.print_exc()
             try:
-                # Отправляем сообщение об ошибке через прямые HTTP запросы
                 import requests
                 requests.post(
                     f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",

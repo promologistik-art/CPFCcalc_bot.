@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 Модуль для обновления базы продуктов
-Вызывается из бота по команде админа
 """
 import requests
 from bs4 import BeautifulSoup
@@ -11,54 +10,37 @@ import os
 import re
 from urllib.parse import urljoin
 
-# Глобальная переменная для хранения URL для отправки сообщений
+# Глобальные переменные для отправки сообщений
 telegram_bot_url = None
 telegram_chat_id = None
 
 def set_telegram_target(bot_token, chat_id):
-    """Устанавливает параметры для отправки сообщений в Telegram"""
     global telegram_bot_url, telegram_chat_id
     telegram_bot_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     telegram_chat_id = chat_id
 
 def send_message(text):
-    """Отправляет сообщение через Telegram API (синхронно)"""
     print(text)
-    
-    global telegram_bot_url, telegram_chat_id
     if telegram_bot_url and telegram_chat_id:
         try:
-            requests.post(
-                telegram_bot_url,
-                json={"chat_id": telegram_chat_id, "text": text},
-                timeout=10
-            )
-        except Exception as e:
-            print(f"Ошибка отправки в Telegram: {e}")
+            requests.post(telegram_bot_url, json={"chat_id": telegram_chat_id, "text": text}, timeout=10)
+        except:
+            pass
 
 def update_database(bot_token=None, chat_id=None):
-    """
-    Обновление базы данных продуктами
-    Если передан bot_token и chat_id, отправляет сообщения в Telegram
-    """
     try:
-        # Если есть токен, устанавливаем для отправки сообщений
         if bot_token and chat_id:
             set_telegram_target(bot_token, chat_id)
         
         send_message("🚀 Начинаю обновление базы...")
         result = parse_calorizator()
-        
         send_message(f"✅ {result}")
         return result
-        
     except Exception as e:
-        error_msg = f"❌ Ошибка: {str(e)}"
-        send_message(error_msg)
-        return error_msg
+        send_message(f"❌ Ошибка: {str(e)}")
+        return str(e)
 
 def parse_calorizator():
-    """Парсинг calorizator.ru"""
     base_url = "https://calorizator.ru"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -66,23 +48,69 @@ def parse_calorizator():
     
     send_message("📡 Получаю список категорий...")
     
-    # Получаем список категорий
     url = f"{base_url}/product"
     try:
         response = requests.get(url, headers=headers, timeout=30)
         soup = BeautifulSoup(response.text, 'html.parser')
     except Exception as e:
         send_message(f"❌ Не удалось загрузить страницу: {e}")
-        return "Не удалось подключиться к calorizator.ru"
+        return "Не удалось подключиться"
     
+    # Ищем категории в меню
     categories = []
-    category_links = soup.select('div.item-list ul li a')
     
-    for link in category_links:
-        cat_name = link.text.strip()
-        cat_url = urljoin(base_url, link['href'])
-        if cat_name and 'product' in cat_url:
-            categories.append((cat_name, cat_url))
+    # Пробуем разные селекторы
+    possible_selectors = [
+        'ul.nav.nav-tabs li a',
+        'div.views-grouping-header a',
+        'div.item-list ul li a',
+        'div.view-content ul li a',
+        'a[href*="/product/"]'
+    ]
+    
+    for selector in possible_selectors:
+        links = soup.select(selector)
+        if links:
+            for link in links:
+                cat_name = link.text.strip()
+                cat_url = urljoin(base_url, link['href'])
+                if cat_name and len(cat_name) < 50 and '/product/' in cat_url:
+                    categories.append((cat_name, cat_url))
+            if categories:
+                break
+    
+    # Если ничего не нашли, ищем все ссылки с /product/
+    if not categories:
+        all_links = soup.find_all('a', href=True)
+        for link in all_links:
+            if '/product/' in link['href']:
+                cat_name = link.text.strip()
+                cat_url = urljoin(base_url, link['href'])
+                if cat_name and cat_name not in ['Главная', 'О сайте', 'Контакты', 'Все']:
+                    categories.append((cat_name, cat_url))
+        # Убираем дубликаты
+        categories = list(dict.fromkeys(categories))
+    
+    if not categories:
+        send_message("⚠️ Не удалось найти категории. Загружаю резервный список...")
+        # Резервный список категорий
+        categories = [
+            ("Молочные продукты", f"{base_url}/product/molochnye-produkty"),
+            ("Мясо", f"{base_url}/product/mjaso"),
+            ("Птица", f"{base_url}/product/ptitsa"),
+            ("Рыба", f"{base_url}/product/ryba"),
+            ("Яйца", f"{base_url}/product/yajca"),
+            ("Овощи", f"{base_url}/product/ovoshchi"),
+            ("Фрукты", f"{base_url}/product/frukty"),
+            ("Крупы", f"{base_url}/product/krupy"),
+            ("Хлеб", f"{base_url}/product/hleb"),
+            ("Масла", f"{base_url}/product/masla"),
+            ("Орехи", f"{base_url}/product/orekhi"),
+            ("Напитки", f"{base_url}/product/napitki"),
+            ("Сладости", f"{base_url}/product/sladosti"),
+            ("Супы", f"{base_url}/product/supy"),
+            ("Салаты", f"{base_url}/product/salaty"),
+        ]
     
     send_message(f"📁 Найдено категорий: {len(categories)}")
     
@@ -101,12 +129,11 @@ def parse_calorizator():
         else:
             send_message(f"   ⚠️ Продуктов не найдено")
         
-        time.sleep(1)  # Пауза между категориями
+        time.sleep(1)
     
     return f"Обновление завершено! Добавлено продуктов: {total_products}"
 
 def parse_category(category_url, category_name, headers, base_url):
-    """Парсит категорию"""
     products = []
     page = 1
     
@@ -117,7 +144,10 @@ def parse_category(category_url, category_name, headers, base_url):
             response = requests.get(url, headers=headers, timeout=30)
             soup = BeautifulSoup(response.text, 'html.parser')
             
+            # Ищем таблицу с продуктами
             product_rows = soup.select('table.views-table tbody tr')
+            if not product_rows:
+                product_rows = soup.select('table tbody tr')
             
             if not product_rows:
                 break
@@ -136,26 +166,26 @@ def parse_category(category_url, category_name, headers, base_url):
                             products.append(product_data)
                             page_products += 1
                         
-                        time.sleep(0.3)  # Небольшая пауза
+                        time.sleep(0.3)
             
+            if page_products == 0:
+                break
+                
             send_message(f"   Страница {page}: +{page_products} продуктов")
             page += 1
             
-        except requests.exceptions.Timeout:
-            send_message(f"   ⚠️ Таймаут на странице {page}, пропускаем")
-            break
         except Exception as e:
-            send_message(f"   ⚠️ Ошибка: {e}")
+            send_message(f"   ⚠️ Ошибка на странице {page}: {e}")
             break
     
     return products
 
 def parse_product_page(product_url, product_name, category_name, headers):
-    """Парсит страницу продукта"""
     try:
         response = requests.get(product_url, headers=headers, timeout=15)
         soup = BeautifulSoup(response.text, 'html.parser')
         
+        # Ищем таблицу с пищевой ценностью
         nutrition_table = soup.find('table', class_='nutrition-info')
         if not nutrition_table:
             nutrition_table = soup.find('table', class_='views-table')
@@ -181,9 +211,8 @@ def parse_product_page(product_url, product_name, category_name, headers):
     return None
 
 def extract_value(table, label):
-    """Извлекает числовое значение из таблицы"""
     try:
-        row = table.find('th', string=re.compile(label))
+        row = table.find('th', string=re.compile(label, re.IGNORECASE))
         if row:
             parent_row = row.find_parent('tr')
             if parent_row:
@@ -198,7 +227,6 @@ def extract_value(table, label):
     return 0.0
 
 def save_to_sqlite(products):
-    """Сохраняет продукты в SQLite"""
     db_path = 'kbju_bot.db'
     
     if not os.path.exists(db_path):
@@ -208,16 +236,14 @@ def save_to_sqlite(products):
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     
-    # Получаем категории
     cursor.execute("SELECT id, name FROM food_categories")
     categories = {name: id for id, name in cursor.fetchall()}
     
     added = 0
     for p in products:
         cat_name = map_category(p['category'])
-        category_id = categories.get(cat_name, 1)  # 1 = other
+        category_id = categories.get(cat_name, 1)
         
-        # Проверяем, есть ли уже такой продукт
         cursor.execute("SELECT id FROM foods WHERE name_ru = ?", (p['name'],))
         if not cursor.fetchone():
             cursor.execute("""
@@ -241,7 +267,6 @@ def save_to_sqlite(products):
     return added
 
 def map_category(cat_name):
-    """Маппинг категорий с calorizator.ru на категории бота"""
     mapping = {
         'Молочные продукты': 'dairy',
         'Мясо': 'meat',
@@ -258,13 +283,5 @@ def map_category(cat_name):
         'Сладости': 'sweets',
         'Супы': 'soups',
         'Салаты': 'salads',
-        'Вторые блюда': 'main_dishes',
-        'Полуфабрикаты': 'fastfood',
-        'Фаст-фуд': 'fastfood',
     }
     return mapping.get(cat_name, 'other')
-
-if __name__ == "__main__":
-    # Для запуска из командной строки
-    result = update_database()
-    print(result)
