@@ -10,41 +10,41 @@ import sqlite3
 import os
 import re
 from urllib.parse import urljoin
-import asyncio
 
-# Глобальная переменная для хранения функции отправки сообщений
-send_callback = None
-loop = None
+# Глобальная переменная для хранения URL для отправки сообщений
+telegram_bot_url = None
+telegram_chat_id = None
 
-def set_send_callback(callback, event_loop=None):
-    """Устанавливает функцию для отправки сообщений в Telegram"""
-    global send_callback, loop
-    send_callback = callback
-    loop = event_loop
+def set_telegram_target(bot_token, chat_id):
+    """Устанавливает параметры для отправки сообщений в Telegram"""
+    global telegram_bot_url, telegram_chat_id
+    telegram_bot_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    telegram_chat_id = chat_id
 
 def send_message(text):
-    """Отправляет сообщение через callback (синхронная обертка)"""
-    global send_callback, loop
-    if send_callback and loop:
-        try:
-            # Запускаем асинхронную функцию в существующем цикле
-            asyncio.run_coroutine_threadsafe(send_callback(text), loop)
-        except Exception as e:
-            print(f"Ошибка отправки: {e}")
+    """Отправляет сообщение через Telegram API (синхронно)"""
     print(text)
+    
+    global telegram_bot_url, telegram_chat_id
+    if telegram_bot_url and telegram_chat_id:
+        try:
+            requests.post(
+                telegram_bot_url,
+                json={"chat_id": telegram_chat_id, "text": text},
+                timeout=10
+            )
+        except Exception as e:
+            print(f"Ошибка отправки в Telegram: {e}")
 
-def update_database(chat_id=None, bot=None, event_loop=None):
+def update_database(bot_token=None, chat_id=None):
     """
     Обновление базы данных продуктами
-    Если передан bot и chat_id, отправляет сообщения в Telegram
+    Если передан bot_token и chat_id, отправляет сообщения в Telegram
     """
     try:
-        # Если есть bot, устанавливаем callback
-        if bot and chat_id and event_loop:
-            set_send_callback(
-                lambda msg: bot.send_message(chat_id=chat_id, text=msg),
-                event_loop
-            )
+        # Если есть токен, устанавливаем для отправки сообщений
+        if bot_token and chat_id:
+            set_telegram_target(bot_token, chat_id)
         
         send_message("🚀 Начинаю обновление базы...")
         result = parse_calorizator()
