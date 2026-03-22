@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Модуль для обновления базы продуктов
+Использует requests-html для выполнения JavaScript
 """
 import requests
-from bs4 import BeautifulSoup
+from requests_html import HTMLSession
 import time
 import sqlite3
 import os
@@ -39,56 +40,15 @@ def update_database(bot_token=None, chat_id=None):
         return str(e)
 
 def parse_calorizator():
-    """Парсит все страницы"""
+    """Парсит все страницы с поддержкой JavaScript"""
     base_url = "https://calorizator.ru"
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
     
-    send_message("📡 Получаю первую страницу для проверки...")
+    send_message("📡 Запускаю браузер для загрузки страниц...")
     
-    # Сначала проверим первую страницу и покажем HTML
-    test_url = f"{base_url}/product/all"
-    try:
-        response = requests.get(test_url, headers=headers, timeout=30)
-        html = response.text
-        
-        send_message(f"✅ Страница загружена: {len(html)} символов")
-        
-        # Ищем таблицу
-        if '<table' in html:
-            send_message("✅ Найдено <table> в HTML")
-        else:
-            send_message("❌ <table> не найдено в HTML")
-        
-        # Ищем .view-content
-        if 'view-content' in html:
-            send_message("✅ Найдено .view-content в HTML")
-        else:
-            send_message("❌ .view-content не найдено")
-        
-        # Ищем любой контент
-        if 'Продукт' in html:
-            send_message("✅ Найдено слово 'Продукт' в HTML")
-            
-            # Найдем позицию первого 'Продукт'
-            pos = html.find('Продукт')
-            send_message(f"   Позиция: {pos}")
-            send_message(f"   Контекст: ...{html[max(0,pos-50):pos+100]}...")
-        else:
-            send_message("❌ 'Продукт' не найдено")
-        
-        # Проверим, есть ли защита
-        if 'captcha' in html.lower():
-            send_message("⚠️ Обнаружена капча!")
-        if 'access denied' in html.lower():
-            send_message("⚠️ Доступ запрещен!")
-            
-    except Exception as e:
-        send_message(f"❌ Ошибка проверки: {e}")
-        return f"Ошибка: {e}"
-    
-    send_message("📡 Начинаю парсинг всех страниц...")
+    session = HTMLSession()
     
     total_pages = 86
     total_saved = 0
@@ -101,74 +61,67 @@ def parse_calorizator():
         
         send_message(f"\n📄 Страница {page_num+1}/{total_pages}")
         
-        products = parse_page(url, headers)
-        
-        if products:
-            send_message(f"   ✅ Найдено продуктов: {len(products)}")
-            saved = save_to_sqlite(products)
-            total_saved += saved
-            if saved > 0:
-                send_message(f"   💾 Добавлено в БД: {saved} (новых)")
-        else:
-            send_message(f"   ⚠️ Продуктов не найдено")
-        
-        time.sleep(1)
+        try:
+            # Загружаем страницу с выполнением JavaScript
+            response = session.get(url, headers=headers)
+            response.html.render(timeout=20, sleep=2)  # Ждем 2 секунды после загрузки
+            
+            # Ищем таблицу после выполнения JS
+            table = response.html.find('table')
+            
+            if not table:
+                send_message(f"   ⚠️ Таблица не найдена")
+                continue
+            
+            products = parse_table(table[0])
+            
+            if products:
+                send_message(f"   ✅ Найдено продуктов: {len(products)}")
+                saved = save_to_sqlite(products)
+                total_saved += saved
+                if saved > 0:
+                    send_message(f"   💾 Добавлено в БД: {saved} (новых)")
+            else:
+                send_message(f"   ⚠️ Продуктов не найдено")
+            
+            time.sleep(1)
+            
+        except Exception as e:
+            send_message(f"   ⚠️ Ошибка: {e}")
+            continue
     
+    session.close()
     return f"Обновление завершено! Всего добавлено: {total_saved}"
 
-def parse_page(url, headers):
-    """Парсит одну страницу"""
+def parse_table(table):
+    """Парсит HTML-таблицу"""
     products = []
     
-    try:
-        response = requests.get(url, headers=headers, timeout=30)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Ищем таблицу
-        tables = soup.find_all('table')
-        
-        if not tables:
-            return products
-        
-        # Берем таблицу с наибольшим количеством строк
-        best_table = None
-        max_rows = 0
-        for table in tables:
-            rows = table.find_all('tr')
-            if len(rows) > max_rows:
-                max_rows = len(rows)
-                best_table = table
-        
-        if not best_table:
-            return products
-        
-        rows = best_table.find_all('tr')
-        
-        # Ищем строку с заголовками
-        header_row = None
-        for row in rows[:5]:
-            if 'Продукт' in row.text:
-                header_row = row
-                break
-        
-        if not header_row:
-            # Если не нашли заголовок, начинаем со второй строки
-            start_idx = 1
-        else:
-            start_idx = rows.index(header_row) + 1
-        
-        for row in rows[start_idx:]:
-            cols = row.find_all('td')
-            if len(cols) >= 5:
-                product_name = cols[0].text.strip()
-                if not product_name:
+    rows = table.find('tr')
+    
+    if not rows:
+        return products
+    
+    # Пропускаем заголовок
+    for row in rows[1:]:
+        cols = row.find('td')
+        if cols:
+            # Получаем все ячейки в строке
+            cells = row.find('td')
+            # Если find вернул одну ячейку, нужно получить все
+            if not isinstance(cells, list):
+                cells = [cells]
+            
+            if len(cells) >= 5:
+                product_name = cells[0].text.strip()
+                if not product_name or product_name == 'Продукт':
                     continue
                 
                 try:
-                    protein = parse_value(cols[1].text)
-                    fat = parse_value(cols[2].text)
-                    carbs = parse_value(cols[3].text)
-                    calories = parse_value(cols[4].text)
+                    protein = parse_value(cells[1].text)
+                    fat = parse_value(cells[2].text)
+                    carbs = parse_value(cells[3].text)
+                    calories = parse_value(cells[4].text)
                 except:
                     continue
                 
@@ -182,12 +135,8 @@ def parse_page(url, headers):
                     'fat': fat,
                     'carbs': carbs,
                 })
-        
-        return products
-        
-    except Exception as e:
-        send_message(f"   ⚠️ Ошибка: {e}")
-        return []
+    
+    return products
 
 def parse_value(text):
     if not text:
