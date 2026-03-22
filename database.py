@@ -39,7 +39,6 @@ class Database:
             ('salads', 'Салаты'),
             ('main_dishes', 'Вторые блюда'),
             ('fastfood', 'Фастфуд'),
-            ('international', 'Национальные блюда'),
             ('other', 'Другое'),
         ]
         
@@ -49,16 +48,28 @@ class Database:
             session.flush()
             categories[name] = cat.id
         
-        # Добавляем базовый набор продуктов (остальное добавится через парсер)
+        # Базовые продукты для старта
         base_foods = [
-            # Несколько основных продуктов для теста
-            Food(name='avocado', name_ru='авокадо', calories=160, proteins=2, fats=15, carbs=6, category_id=categories['fruits'], default_portion=100),
-            Food(name='salad_olivier', name_ru='салат оливье', calories=200, proteins=5, fats=15, carbs=10, category_id=categories['salads'], default_portion=200),
-            Food(name='borscht', name_ru='борщ', calories=50, proteins=2, fats=2, carbs=6, category_id=categories['soups'], default_portion=300),
-            Food(name='beer_light', name_ru='пиво светлое', calories=42, proteins=0.4, fats=0, carbs=3.5, category_id=categories['drinks'], is_liquid=True, default_portion=500),
+            Food(name='cottage cheese 9%', name_ru='творог 9%', calories=169, proteins=18, fats=9, carbs=3, category_id=categories['dairy'], default_portion=150),
+            Food(name='cottage cheese 5%', name_ru='творог 5%', calories=145, proteins=21, fats=5, carbs=3, category_id=categories['dairy'], default_portion=150),
+            Food(name='milk 2.5%', name_ru='молоко 2.5%', calories=54, proteins=2.9, fats=2.5, carbs=4.7, category_id=categories['dairy'], is_liquid=True, default_portion=200),
+            Food(name='kefir 2.5%', name_ru='кефир 2.5%', calories=50, proteins=3, fats=2.5, carbs=4, category_id=categories['dairy'], is_liquid=True, default_portion=200),
+            Food(name='sour cream 20%', name_ru='сметана 20%', calories=206, proteins=2.5, fats=20, carbs=3, category_id=categories['dairy'], default_portion=20),
+            Food(name='butter', name_ru='масло сливочное', calories=748, proteins=0.5, fats=82.5, carbs=0.8, category_id=categories['dairy'], default_portion=10),
+            Food(name='cheese russian', name_ru='сыр российский', calories=363, proteins=24, fats=29, carbs=0, category_id=categories['dairy'], default_portion=30),
+            Food(name='sausage boiled', name_ru='колбаса вареная', calories=250, proteins=12, fats=22, carbs=1.5, category_id=categories['meat'], default_portion=50),
+            Food(name='sausage smoked', name_ru='колбаса копченая', calories=400, proteins=16, fats=38, carbs=2, category_id=categories['meat'], default_portion=50),
+            Food(name='chicken breast', name_ru='куриная грудка', calories=165, proteins=31, fats=3.6, carbs=0, category_id=categories['poultry'], default_portion=150),
+            Food(name='shashlik pork', name_ru='шашлык из свинины', calories=280, proteins=15, fats=24, carbs=1, category_id=categories['main_dishes'], default_portion=200),
+            Food(name='beer light', name_ru='пиво светлое', calories=42, proteins=0.4, fats=0, carbs=3.5, category_id=categories['drinks'], is_liquid=True, default_portion=500),
             Food(name='peanuts', name_ru='арахис', calories=552, proteins=26, fats=45, carbs=10, category_id=categories['nuts'], default_portion=30),
+            Food(name='avocado', name_ru='авокадо', calories=160, proteins=2, fats=15, carbs=6, category_id=categories['fruits'], default_portion=100),
             Food(name='coffee', name_ru='кофе', calories=2, proteins=0.1, fats=0, carbs=0.3, category_id=categories['drinks'], is_liquid=True, default_portion=200),
             Food(name='sugar', name_ru='сахар', calories=387, proteins=0, fats=0, carbs=99.8, category_id=categories['sweets'], default_portion=7),
+            Food(name='bread white', name_ru='хлеб белый', calories=265, proteins=9, fats=3.2, carbs=49, category_id=categories['bakery'], default_portion=30),
+            Food(name='borscht', name_ru='борщ', calories=50, proteins=2, fats=2, carbs=6, category_id=categories['soups'], is_liquid=True, default_portion=300),
+            Food(name='salad olivier', name_ru='салат оливье', calories=200, proteins=5, fats=15, carbs=10, category_id=categories['salads'], default_portion=200),
+            Food(name='eggs', name_ru='яйца', calories=157, proteins=12.7, fats=11.5, carbs=0.7, category_id=categories['eggs'], default_portion=100),
         ]
         
         for food in base_foods:
@@ -70,99 +81,78 @@ class Database:
     
     def find_food(self, name):
         """
-        БЫСТРЫЙ поиск продукта
-        Возвращает Food объект или None
+        Улучшенный поиск продукта по названию
+        Приоритет: точное совпадение > начало названия > частичное совпадение
         """
         session = self.Session()
         name = name.lower().strip()
         
-        # 1. Точное совпадение (самое быстрое)
+        # 1. Точное совпадение
         food = session.query(Food).filter(Food.name_ru == name).first()
         if food:
             session.close()
             return food
         
-        # 2. Поиск по вхождению (like)
-        foods = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).all()
-        
+        # 2. Поиск по началу названия (наиболее релевантное)
+        foods = session.query(Food).filter(Food.name_ru.ilike(f'{name}%')).all()
         if foods:
-            # Сортируем по длине (самое короткое совпадение = самое точное)
+            # Сортируем по длине (самое короткое - самое точное)
             foods.sort(key=lambda x: len(x.name_ru))
             session.close()
             return foods[0]
         
-        # 3. Поиск по словам
+        # 3. Поиск по вхождению (частичное совпадение)
+        foods = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).all()
+        if foods:
+            # Сортируем по длине (самое короткое - самое общее, но лучше подходит)
+            foods.sort(key=lambda x: len(x.name_ru))
+            session.close()
+            return foods[0]
+        
+        # 4. Поиск по английскому названию
+        food = session.query(Food).filter(Food.name.ilike(f'%{name}%')).first()
+        if food:
+            session.close()
+            return food
+        
+        # 5. Поиск по словам (если название состоит из нескольких слов)
         words = name.split()
         for word in words:
-            if len(word) > 2:  # Игнорируем короткие слова
-                food = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).first()
-                if food:
+            if len(word) > 2:
+                foods = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).all()
+                if foods:
+                    foods.sort(key=lambda x: len(x.name_ru))
                     session.close()
-                    return food
+                    return foods[0]
         
         session.close()
         return None
     
-    def find_food_fuzzy(self, name):
-        """
-        НЕЧЕТКИЙ поиск (если точный не сработал)
-        Использует LIKE для поиска похожих названий
-        """
+    def find_food_exact(self, name):
+        """Поиск с приоритетом точного совпадения"""
         session = self.Session()
         name = name.lower().strip()
         
-        # Разбиваем на слова
-        words = name.split()
-        query = session.query(Food)
-        
-        for word in words:
-            if len(word) > 2:
-                query = query.filter(Food.name_ru.ilike(f'%{word}%'))
-        
-        foods = query.limit(5).all()
-        session.close()
-        
-        if foods:
-            return foods[0]
-        return None
-    
-    def add_food_from_user(self, name, calories=None, proteins=None, fats=None, carbs=None):
-        """
-        Добавление продукта пользователем
-        """
-        session = self.Session()
-        
-        # Проверяем, нет ли уже такого
-        existing = session.query(Food).filter(Food.name_ru == name).first()
-        if existing:
+        food = session.query(Food).filter(Food.name_ru == name).first()
+        if food:
             session.close()
-            return existing
+            return food
         
-        # Создаем новый продукт с базовыми значениями
-        new_food = Food(
-            name=name.lower().replace(' ', '_'),
-            name_ru=name,
-            calories=calories or 100,
-            proteins=proteins or 5,
-            fats=fats or 5,
-            carbs=carbs or 10,
-            category_id=1,  # other
-            default_portion=100
-        )
-        
-        session.add(new_food)
-        session.commit()
         session.close()
-        return new_food
+        return None
     
     def add_meal(self, telegram_id, food_name, weight, meal_type='breakfast'):
         """Добавление приема пищи"""
         session = self.Session()
-        food = self.find_food(food_name)
+        
+        # Пытаемся найти точное совпадение
+        food = self.find_food_exact(food_name)
+        if not food:
+            food = self.find_food(food_name)
         
         if not food:
-            # Если не нашли, создаем временный продукт
-            food = self.add_food_from_user(food_name)
+            session.close()
+            return None
         
         meal = MealEntry(
             user_id=telegram_id,
