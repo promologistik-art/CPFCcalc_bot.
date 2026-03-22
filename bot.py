@@ -6,6 +6,7 @@ import json
 import sqlite3
 import os
 import re
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 from database import Database
@@ -49,151 +50,46 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("👋 Что сегодня ел(а)?")
 
-async def admin_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для админа - импорт продуктов из data.json"""
-    user_id = update.effective_user.id
-    
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
-        return
-    
-    global db_updating
-    if db_updating:
-        await update.message.reply_text("🔄 Обновление/импорт уже выполняется. Подождите...")
-        return
-    
-    await update.message.reply_text("🚀 Начинаю импорт продуктов из data.json...\n⏱️ Это займет 1-3 минуты.")
-    
-    def run_import():
-        global db_updating
-        db_updating = True
-        try:
-            # Отправляем сообщение о начале
-            context.bot.send_message(chat_id=user_id, text="📥 Загрузка файла data.json...")
-            
-            # Проверяем существование файла
-            if not os.path.exists('data.json'):
-                context.bot.send_message(chat_id=user_id, text="❌ Файл data.json не найден!")
-                return
-            
-            # Загружаем JSON
-            with open('data.json', 'r', encoding='utf-8') as f:
-                products = json.load(f)
-            
-            context.bot.send_message(chat_id=user_id, text=f"📦 Загружено продуктов: {len(products)}")
-            
-            # Подключаемся к базе
-            db_path = 'kbju_bot.db'
-            if not os.path.exists(db_path):
-                context.bot.send_message(chat_id=user_id, text="❌ База данных не найдена!")
-                return
-            
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
-            
-            # Получаем категории
-            cursor.execute("SELECT id, name FROM food_categories")
-            categories = {name: id for id, name in cursor.fetchall()}
-            
-            # Статистика
-            added = 0
-            skipped = 0
-            total = len(products)
-            
-            context.bot.send_message(chat_id=user_id, text="💾 Начинаю импорт...\n0%")
-            
-            for idx, (name, data) in enumerate(products.items()):
-                # Определяем категорию по названию
-                category = detect_category_import(name)
-                category_id = categories.get(category, 1)
-                
-                # Проверяем, есть ли уже такой продукт
-                cursor.execute("SELECT id FROM foods WHERE name_ru = ?", (name,))
-                if cursor.fetchone():
-                    skipped += 1
-                    continue
-                
-                # Генерируем безопасное имя
-                safe_name = name.lower().replace(' ', '_').replace('-', '_')
-                safe_name = re.sub(r'[^a-zа-я0-9_]', '', safe_name)
-                if not safe_name:
-                    safe_name = f"product_{hash(name)}"
-                
-                # Добавляем продукт
-                cursor.execute("""
-                    INSERT INTO foods 
-                    (name, name_ru, calories, proteins, fats, carbs, category_id, default_portion)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    safe_name[:200],
-                    name[:200],
-                    data.get('calories', 0),
-                    data.get('protein', 0),
-                    data.get('fat', 0),
-                    data.get('carbohydrates', 0),
-                    category_id,
-                    guess_portion_import(name)
-                ))
-                added += 1
-                
-                # Отправляем прогресс каждые 500 продуктов
-                if added % 500 == 0:
-                    percent = int(added / total * 100)
-                    context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"📊 Прогресс: {percent}% (добавлено {added} продуктов)"
-                    )
-                    conn.commit()
-            
-            conn.commit()
-            conn.close()
-            
-            context.bot.send_message(
-                chat_id=user_id,
-                text=f"✅ Импорт завершен!\n"
-                     f"   Добавлено: {added} продуктов\n"
-                     f"   Пропущено (уже есть): {skipped} продуктов"
-            )
-            
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ Ошибка при импорте: {str(e)}"
-            )
-        finally:
-            db_updating = False
-    
-    thread = threading.Thread(target=run_import)
-    thread.start()
+def send_telegram_message(chat_id, text):
+    """Синхронная отправка сообщения в Telegram"""
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+            json={"chat_id": chat_id, "text": text},
+            timeout=30
+        )
+    except Exception as e:
+        print(f"Ошибка отправки сообщения: {e}")
 
 def detect_category_import(product_name):
     """Определяет категорию по названию продукта"""
     name_lower = product_name.lower()
     
     categories = {
-        'dairy': ['молоко', 'кефир', 'йогурт', 'творог', 'сыр', 'сметана', 'ряженка', 'сливки', 'активиа', 'актимель'],
-        'meat': ['говядина', 'свинина', 'телятина', 'баранина', 'колбаса', 'сосиски', 'ветчина', 'бекон', 'сало', 'мясо'],
-        'poultry': ['курица', 'индейка', 'утка', 'гусь', 'цыпленок'],
-        'fish': ['рыба', 'лосось', 'семга', 'форель', 'скумбрия', 'сельдь', 'треска', 'минтай', 'хек', 'креветка', 'кальмар'],
-        'eggs': ['яйцо', 'яйца', 'омлет'],
-        'vegetables': ['картофель', 'капуста', 'морковь', 'свекла', 'лук', 'огурец', 'помидор', 'перец', 'кабачок'],
-        'fruits': ['яблоко', 'банан', 'апельсин', 'мандарин', 'груша', 'виноград', 'клубника', 'малина', 'авокадо'],
-        'grains': ['гречка', 'рис', 'овсянка', 'пшено', 'перловка', 'манка', 'макароны', 'паста'],
-        'bakery': ['хлеб', 'батон', 'булка', 'лаваш', 'сухарь'],
-        'fats': ['масло', 'маргарин', 'майонез'],
-        'nuts': ['орех', 'арахис', 'миндаль', 'фундук', 'кешью'],
-        'drinks': ['кофе', 'чай', 'сок', 'компот', 'квас', 'лимонад', 'пиво', 'вино', 'водка', '7up'],
-        'sweets': ['шоколад', 'конфета', 'печенье', 'вафли', 'халва', 'зефир', 'мармелад', 'мед', 'сахар'],
-        'soups': ['суп', 'борщ', 'щи', 'солянка', 'окрошка', 'уха'],
-        'salads': ['салат', 'оливье', 'винегрет', 'цезарь'],
+        'dairy': ['молоко', 'кефир', 'йогурт', 'творог', 'сыр', 'сметана', 'ряженка', 'сливки', 'активиа', 'актимель', 'айран', 'тан', 'простокваша', 'варенец', 'снежок'],
+        'meat': ['говядина', 'свинина', 'телятина', 'баранина', 'колбаса', 'сосиски', 'ветчина', 'бекон', 'сало', 'мясо', 'шницель', 'эскалоп', 'ягнятина', 'конина', 'оленина', 'кролик'],
+        'poultry': ['курица', 'индейка', 'утка', 'гусь', 'цыпленок', 'бройлер', 'перепел', 'цесарка'],
+        'fish': ['рыба', 'лосось', 'семга', 'форель', 'скумбрия', 'сельдь', 'треска', 'минтай', 'хек', 'креветка', 'кальмар', 'щука', 'окунь', 'карп', 'тунец', 'горбуша', 'кета', 'кижуч', 'палтус', 'камбала', 'язь', 'судак', 'сом', 'налим', 'мойва', 'килька', 'сайра', 'ставрида', 'анчоус', 'муксун', 'нельма', 'омуль', 'пелядь', 'ряпушка', 'сиг', 'чир', 'голец', 'хариус'],
+        'eggs': ['яйцо', 'яйца', 'омлет', 'яичница', 'меланж'],
+        'vegetables': ['картофель', 'капуста', 'морковь', 'свекла', 'лук', 'чеснок', 'огурец', 'помидор', 'перец', 'кабачок', 'баклажан', 'тыква', 'редис', 'редька', 'спаржа', 'артишок', 'эндивий', 'брокколи', 'цветная капуста', 'брюссельская капуста', 'кале', 'руккола', 'салат', 'шпинат', 'щавель', 'петрушка', 'укроп', 'кинза', 'базилик', 'тимьян', 'розмарин'],
+        'fruits': ['яблоко', 'банан', 'апельсин', 'мандарин', 'груша', 'виноград', 'клубника', 'малина', 'авокадо', 'ананас', 'арбуз', 'дыня', 'абрикос', 'персик', 'слива', 'вишня', 'черешня', 'киви', 'хурма', 'гранат', 'лимон', 'лайм', 'грейпфрут', 'помело', 'манго', 'папайя', 'фейхоа', 'инжир', 'финики', 'изюм', 'курага', 'чернослив'],
+        'grains': ['гречка', 'рис', 'овсянка', 'пшено', 'перловка', 'манка', 'макароны', 'паста', 'спагетти', 'кускус', 'булгур', 'киноа', 'полба', 'ячмень', 'ячневая', 'овсяные хлопья', 'пшеничные хлопья', 'ржаные хлопья', 'кукурузная крупа'],
+        'bakery': ['хлеб', 'батон', 'булка', 'лаваш', 'сухарь', 'гренки', 'бублик', 'сушка', 'багет', 'чиабатта', 'лепешка', 'пита', 'тортилья', 'круассан', 'сдоба', 'булочка', 'рогалик', 'кекс', 'маффин'],
+        'fats': ['масло', 'маргарин', 'майонез', 'жир', 'смалец', 'спред'],
+        'nuts': ['орех', 'арахис', 'миндаль', 'фундук', 'кешью', 'фисташка', 'семечка', 'семена', 'кедровый', 'грецкий', 'лесной', 'кокос', 'конопли', 'кешью', 'пекан', 'макадамия', 'бразильский'],
+        'drinks': ['кофе', 'чай', 'сок', 'компот', 'кисель', 'квас', 'лимонад', 'кола', 'пепси', 'фанта', 'спрайт', 'пиво', 'вино', 'водка', 'коньяк', 'виски', 'ром', 'джин', 'ликер', 'энергетический', '7up', 'тарагон', 'коктейль', 'минеральная вода'],
+        'sweets': ['шоколад', 'конфета', 'печенье', 'вафли', 'халва', 'зефир', 'мармелад', 'варенье', 'джем', 'мед', 'сахар', 'торт', 'пирожное', 'кекс', 'пряник', 'коврижка', 'пастила', 'ирис', 'карамель', 'нуга', 'марципан', 'лукум'],
+        'soups': ['суп', 'борщ', 'щи', 'солянка', 'окрошка', 'уха', 'рассольник', 'бульон', 'харчо', 'мисо'],
+        'salads': ['салат', 'оливье', 'винегрет', 'цезарь', 'греческий', 'мимоза', 'шуба', 'столичный', 'крабовый', 'сельдь под шубой'],
+        'fastfood': ['бургер', 'гамбургер', 'чизбургер', 'картошка фри', 'наггетсы', 'пицца', 'шаурма', 'хот-дог', 'ролл', 'суши', 'доширак', 'лапша быстрого приготовления', 'сэндвич', 'воппер'],
+        'semi': ['пельмени', 'вареники', 'манты', 'хинкали', 'блины', 'оладьи', 'сырники', 'котлеты', 'тефтели', 'зразы', 'чебуреки', 'беляши'],
     }
     
     for cat, keywords in categories.items():
         for keyword in keywords:
             if keyword in name_lower:
                 return cat
+    
     return 'other'
 
 def guess_portion_import(name):
@@ -217,6 +113,108 @@ def guess_portion_import(name):
     
     return 100
 
+async def admin_import(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для админа - импорт продуктов из data.json"""
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+        return
+    
+    global db_updating
+    if db_updating:
+        await update.message.reply_text("🔄 Обновление/импорт уже выполняется. Подождите...")
+        return
+    
+    await update.message.reply_text("🚀 Начинаю импорт продуктов из data.json...\n⏱️ Это займет 1-3 минуты.")
+    
+    def run_import():
+        global db_updating
+        db_updating = True
+        try:
+            send_telegram_message(user_id, "📥 Загрузка файла data.json...")
+            
+            if not os.path.exists('data.json'):
+                send_telegram_message(user_id, "❌ Файл data.json не найден!")
+                return
+            
+            with open('data.json', 'r', encoding='utf-8') as f:
+                products = json.load(f)
+            
+            send_telegram_message(user_id, f"📦 Загружено продуктов: {len(products)}")
+            
+            db_path = 'kbju_bot.db'
+            if not os.path.exists(db_path):
+                send_telegram_message(user_id, "❌ База данных не найдена!")
+                return
+            
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT id, name FROM food_categories")
+            categories = {name: id for id, name in cursor.fetchall()}
+            
+            added = 0
+            skipped = 0
+            total = len(products)
+            
+            send_telegram_message(user_id, "💾 Начинаю импорт...")
+            
+            for name, data in products.items():
+                category = detect_category_import(name)
+                category_id = categories.get(category, 1)
+                
+                cursor.execute("SELECT id FROM foods WHERE name_ru = ?", (name,))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+                
+                safe_name = name.lower().replace(' ', '_').replace('-', '_')
+                safe_name = re.sub(r'[^a-zа-я0-9_]', '', safe_name)
+                if not safe_name:
+                    safe_name = f"product_{hash(name)}"
+                
+                cursor.execute("""
+                    INSERT INTO foods 
+                    (name, name_ru, calories, proteins, fats, carbs, category_id, default_portion)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    safe_name[:200],
+                    name[:200],
+                    data.get('calories', 0),
+                    data.get('protein', 0),
+                    data.get('fat', 0),
+                    data.get('carbohydrates', 0),
+                    category_id,
+                    guess_portion_import(name)
+                ))
+                added += 1
+                
+                if added % 500 == 0:
+                    percent = int(added / total * 100)
+                    send_telegram_message(user_id, f"📊 Прогресс: {percent}% (добавлено {added} продуктов)")
+                    conn.commit()
+            
+            conn.commit()
+            conn.close()
+            
+            send_telegram_message(
+                user_id,
+                f"✅ Импорт завершен!\n"
+                f"   Добавлено: {added} продуктов\n"
+                f"   Пропущено (уже есть): {skipped} продуктов"
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            send_telegram_message(user_id, f"❌ Ошибка при импорте: {str(e)}")
+        finally:
+            db_updating = False
+    
+    thread = threading.Thread(target=run_import)
+    thread.start()
+
 async def admin_parse_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Диагностика страницы для отладки парсера"""
     user_id = update.effective_user.id
@@ -227,47 +225,26 @@ async def admin_parse_debug(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text("🔍 Анализирую страницу...")
     
-    import requests
-    from bs4 import BeautifulSoup
-    
-    url = "https://calorizator.ru/product/all?page=0"
-    
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get("https://calorizator.ru/product/all?page=0", timeout=30)
         soup = BeautifulSoup(response.text, 'html.parser')
         
-        # Показываем структуру
         await update.message.reply_text(f"✅ Страница загружена: {len(response.text)} символов")
         
-        # Ищем div с классом view-content
         view_content = soup.find('div', class_='view-content')
         if view_content:
             await update.message.reply_text("✅ Найден div.view-content")
-            
-            # Ищем все строки внутри
             rows = view_content.find_all('div', class_='views-row')
             await update.message.reply_text(f"📋 Найдено views-row: {len(rows)}")
             
             if rows:
-                # Показываем первые 3 продукта
                 for i, row in enumerate(rows[:3]):
-                    # Ищем название
                     title = row.find('div', class_='views-field-title')
                     if title:
-                        name = title.text.strip()
-                        await update.message.reply_text(f"Продукт {i+1}: {name}")
-                    
-                    # Ищем КБЖУ
-                    fields = row.find_all('div', class_='views-field')
-                    for field in fields:
-                        field_text = field.text.strip()
-                        if 'ккал' in field_text or 'Белки' in field_text:
-                            await update.message.reply_text(f"  {field_text[:100]}")
+                        await update.message.reply_text(f"Продукт {i+1}: {title.text.strip()}")
         else:
             await update.message.reply_text("❌ div.view-content не найден")
-            
-        # Показываем HTML
-        await update.message.reply_text(f"📄 HTML первых 2000 символов:\n{response.text[:2000]}")
+            await update.message.reply_text(f"📄 HTML первых 2000 символов:\n{response.text[:2000]}")
         
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {e}")
@@ -292,27 +269,15 @@ async def admin_update_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db_updating = True
         try:
             from update_foods import update_database
-            
-            # Передаем токен и chat_id
             result = update_database(
                 bot_token=BOT_TOKEN,
                 chat_id=user_id
             )
-            
             print(f"Обновление завершено: {result}")
-            
         except Exception as e:
             import traceback
             traceback.print_exc()
-            try:
-                import requests
-                requests.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                    json={"chat_id": user_id, "text": f"❌ Критическая ошибка: {str(e)}"},
-                    timeout=30
-                )
-            except:
-                pass
+            send_telegram_message(user_id, f"❌ Критическая ошибка: {str(e)}")
         finally:
             db_updating = False
     
@@ -461,7 +426,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await handle_parameter_input(update, context)
         return
     
-    # Парсим сообщение
     food_items = parser.parse_message(text)
     
     if not food_items:
@@ -592,12 +556,10 @@ def main():
     """Запуск бота"""
     application = Application.builder().token(BOT_TOKEN).build()
     
-    # Команды для всех
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("settings", settings))
     application.add_handler(CommandHandler("stats", stats))
     
-    # Команды для админа
     application.add_handler(CommandHandler("admin_update_db", admin_update_db))
     application.add_handler(CommandHandler("admin_status", admin_status))
     application.add_handler(CommandHandler("admin_import", admin_import))
