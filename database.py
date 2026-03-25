@@ -84,27 +84,35 @@ class Database:
         session = self.Session()
         name = name.lower().strip()
         
+        print(f"🔍 ИЩЕМ: '{name}'")
+        
         # 1. Точное совпадение
         food = session.query(Food).filter(Food.name_ru == name).first()
         if food:
+            print(f"✅ Найдено точное: {food.name_ru}")
             session.close()
             return food
         
-        # 2. Поиск по вхождению (самый важный для составных названий)
+        # 2. Поиск по вхождению (содержит)
         food = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).first()
         if food:
+            print(f"✅ Найдено по вхождению: {food.name_ru}")
             session.close()
             return food
         
         # 3. Поиск по словам (все слова должны быть в названии)
         words = [w for w in name.split() if len(w) > 2]
         if len(words) > 1:
+            print(f"🔍 Ищем по словам: {words}")
             query = session.query(Food)
             for word in words:
                 query = query.filter(Food.name_ru.ilike(f'%{word}%'))
             
             foods = query.all()
             if foods:
+                print(f"✅ Найдено по словам: {len(foods)} вариантов")
+                for f in foods[:3]:
+                    print(f"   - {f.name_ru}")
                 foods.sort(key=lambda x: len(x.name_ru))
                 session.close()
                 return foods[0]
@@ -113,15 +121,18 @@ class Database:
         for word in words:
             food = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).first()
             if food:
+                print(f"✅ Найдено по слову '{word}': {food.name_ru}")
                 session.close()
                 return food
         
         # 5. Поиск по английскому названию
         food = session.query(Food).filter(Food.name.ilike(f'%{name}%')).first()
         if food:
+            print(f"✅ Найдено по английскому: {food.name_ru}")
             session.close()
             return food
         
+        print(f"❌ НИЧЕГО НЕ НАЙДЕНО для '{name}'")
         session.close()
         return None
     
