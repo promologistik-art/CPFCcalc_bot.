@@ -7,276 +7,181 @@ class FoodParser:
         
     def parse_message(self, text):
         """
-        Универсальный парсер для ЛЮБЫХ запросов
+        УНИВЕРСАЛЬНЫЙ парсер для любых запросов
         """
         text = text.lower().strip()
+        
+        # Заменяем переносы строк и маркеры на запятые
         text = text.replace('\n', ',')
         text = text.replace('•', ',')
         text = re.sub(r'\s+', ' ', text)
         
-        # Разделяем на отдельные продукты
-        products = self._split_products(text)
+        # Разделяем на части по запятым
+        parts = [p.strip() for p in text.split(',') if p.strip()]
+        
+        # Если нет запятых, пробуем разделить по "и"
+        if len(parts) == 1 and ' и ' in parts[0]:
+            parts = [p.strip() for p in parts[0].split(' и ') if p.strip()]
         
         results = []
-        for product_text in products:
-            item = self._parse_one_product(product_text)
-            if item:
-                results.append(item)
+        for part in parts:
+            products = self._parse_part(part)
+            results.extend(products)
         
         return results
     
-    def _split_products(self, text):
+    def _parse_part(self, text):
         """
-        Разделяет текст на отдельные продукты
-        Понимает:
-        - запятые
-        - союз "и"
-        - числа с весами
-        """
-        # Сначала разделяем по запятым
-        if ',' in text:
-            parts = [p.strip() for p in text.split(',') if p.strip()]
-            return self._split_parts_by_and(parts)
-        
-        # Если нет запятых, пробуем разделить по "и"
-        if ' и ' in text:
-            parts = [p.strip() for p in text.split(' и ') if p.strip()]
-            return self._split_parts_by_and(parts)
-        
-        # Если нет разделителей, ищем по числам с весами
-        weight_matches = list(re.finditer(r'\d+\s*[гмл][лр]?', text))
-        if len(weight_matches) > 1:
-            return self._split_by_weights(text, weight_matches)
-        
-        return [text]
-    
-    def _split_parts_by_and(self, parts):
-        """Рекурсивно разделяет части по союзу "и" внутри"""
-        result = []
-        for part in parts:
-            if ' и ' in part and not self._is_complex_name(part):
-                subparts = part.split(' и ')
-                result.extend([p.strip() for p in subparts if p.strip()])
-            else:
-                result.append(part)
-        return result
-    
-    def _split_by_weights(self, text, matches):
-        """Разделяет текст по позициям чисел с весами"""
-        parts = []
-        last_pos = 0
-        for match in matches:
-            if match.start() > last_pos:
-                # Берем текст от предыдущего числа до этого
-                part = text[last_pos:match.start()].strip()
-                if part:
-                    parts.append(part + ' ' + match.group())
-                else:
-                    parts.append(match.group())
-                last_pos = match.end()
-            else:
-                # Добавляем число к предыдущей части
-                if parts:
-                    parts[-1] = parts[-1] + ' ' + match.group()
-                else:
-                    parts.append(match.group())
-                last_pos = match.end()
-        
-        # Последняя часть после последнего числа
-        if last_pos < len(text):
-            remaining = text[last_pos:].strip()
-            if remaining:
-                if parts:
-                    parts[-1] = parts[-1] + ' ' + remaining
-                else:
-                    parts.append(remaining)
-        
-        return parts
-    
-    def _is_complex_name(self, text):
-        """Проверяет, является ли текст сложным названием"""
-        complex_patterns = [
-            r'бутерброд с',
-            r'кофе с',
-            r'чай с',
-            r'салат с',
-            r'суп с',
-            r'соус с',
-        ]
-        for pattern in complex_patterns:
-            if re.search(pattern, text):
-                return True
-        return False
-    
-    def _parse_one_product(self, text):
-        """
-        Парсит ОДИН продукт из текста
-        Возвращает {'name': название, 'weight': вес}
+        Парсит одну часть текста
         """
         if not text:
-            return None
+            return []
         
         # Извлекаем вес
-        weight_info = self._extract_weight_info(text)
+        weight = self._extract_weight(text)
         
-        if weight_info:
-            weight, clean_text = weight_info
-        else:
-            weight = 0
-            clean_text = text
-        
-        # Очищаем название
-        name = self._clean_name(clean_text)
+        # Очищаем название от веса и служебных слов
+        name = self._clean_name(text)
         
         # Если вес не найден, берем стандартную порцию
         if weight == 0:
             weight = self._get_default_weight(name)
         
-        return {'name': name, 'weight': weight}
+        # Пытаемся найти в базе
+        food = self.db.find_food(name)
+        if food:
+            name = food.name_ru
+        
+        return [{'name': name, 'weight': weight}]
     
-    def _extract_weight_info(self, text):
+    def _extract_weight(self, text):
         """
         Извлекает вес из текста
-        Возвращает (вес, текст_без_веса) или None
-        Понимает:
-        - 100г, 100 г, 100грамм
-        - 200мл, 200 мл
-        - 3л, 3 литра
-        - 100 гр, 100гр
-        - полкило, 0.5кг
         """
-        # Паттерны для разных единиц
         patterns = [
-            # Граммы
-            (r'(\d+)\s*г(?:рамм)?', 1, 'г'),
-            (r'(\d+)\s*гр', 1, 'г'),
-            # Миллилитры
-            (r'(\d+)\s*мл', 1, 'мл'),
-            # Литры
-            (r'(\d+(?:\.\d+)?)\s*л(?:итр(?:а|ов)?)?', 1000, 'л'),
-            # Полкило
-            (r'полкило', 500, 'г'),
-            (r'0\.5\s*кг', 500, 'г'),
+            (r'(\d+)\s*г(?:рамм)?', 1),      # 100г, 100 г, 100грамм
+            (r'(\d+)\s*гр', 1),               # 100гр
+            (r'(\d+)\s*мл', 1),               # 200мл
+            (r'(\d+)\s*л(?:итр(?:а|ов)?)?', 1000),  # 3л, 3 литра
+            (r'(\d+)\s*шт', 1),               # 2шт
+            (r'(\d+)\s*ложк[иа]?', 1),        # 2 ложки
         ]
         
-        for pattern, multiplier, unit in patterns:
+        for pattern, multiplier in patterns:
             match = re.search(pattern, text)
             if match:
-                if pattern == 'полкило':
-                    value = 500
-                else:
-                    value = float(match.group(1))
+                value = int(match.group(1))
+                weight = value * multiplier
                 
-                weight = int(value * multiplier)
+                # Для ложек специальная обработка
+                if 'ложк' in pattern:
+                    if 'сахар' in text:
+                        weight = value * 7
+                    else:
+                        weight = value * 15
                 
-                # Удаляем вес из текста
-                clean_text = re.sub(pattern, '', text)
-                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
-                
-                return weight, clean_text
+                return weight
         
-        return None
+        return 0
     
     def _clean_name(self, text):
         """
-        Очищает название от лишних слов и нормализует
+        Очищает название от веса и служебных слов
         """
+        # Удаляем вес и единицы измерения
+        text = re.sub(r'\d+\s*г(?:рамм)?', '', text)
+        text = re.sub(r'\d+\s*гр', '', text)
+        text = re.sub(r'\d+\s*мл', '', text)
+        text = re.sub(r'\d+\s*л(?:итр(?:а|ов)?)?', '', text)
+        text = re.sub(r'\d+\s*шт', '', text)
+        text = re.sub(r'\d+\s*ложк[иа]?', '', text)
+        
         # Удаляем предлоги и служебные слова
-        stop_words = ['с', 'со', 'из', 'на', 'в', 'для', 'и', 'или', 'без', 'по']
+        stop_words = ['с', 'со', 'из', 'на', 'в', 'для', 'и', 'или', 'без', 'по', 'из', 'под']
         words = text.split()
         cleaned = [w for w in words if w not in stop_words]
         
-        # Нормализуем падежи (простейший вариант)
-        name = ' '.join(cleaned)
-        name = self._normalize_case(name)
+        # Убираем лишние пробелы
+        result = ' '.join(cleaned).strip()
         
-        return name
-    
-    def _normalize_case(self, name):
-        """
-        Приводит название к именительному падежу (упрощенно)
-        """
-        # Окончания родительного падежа
-        endings = {
-            'ого': 'ый',
-            'его': 'ий',
-            'ого': 'ой',
-            'его': 'ей',
-            'и': 'а',
-            'у': 'а',
-            'ой': 'а',
-            'ей': 'я',
-        }
-        
-        words = name.split()
-        normalized = []
-        for word in words:
-            changed = False
-            for ending, replacement in endings.items():
-                if word.endswith(ending):
-                    word = word[:-len(ending)] + replacement
-                    changed = True
-                    break
-            normalized.append(word)
-        
-        return ' '.join(normalized)
+        return result if result else text
     
     def _get_default_weight(self, name):
         """
         Возвращает стандартный вес для продукта
         """
-        # Проверяем по ключевым словам
-        keywords = {
-            'хлеб': 30,
+        # Словарь стандартных порций
+        portions = {
+            # Напитки
+            'кофе': 200, 'чай': 200, 'сок': 200, 'компот': 200, 'кисель': 200,
+            'квас': 250, 'лимонад': 250, 'кола': 250, 'пепси': 250,
+            'пиво': 500, 'вино': 150, 'водка': 50, 'коньяк': 50, 'виски': 50,
+            
+            # Молочные
+            'молоко': 200, 'кефир': 200, 'ряженка': 200, 'йогурт': 150,
+            'творог': 150, 'сметана': 20, 'сливки': 20,
+            
+            # Хлеб
+            'хлеб': 30, 'батон': 30, 'булка': 50, 'лаваш': 50,
             'бутерброд': 80,
-            'сыр': 30,
-            'колбаса': 50,
+            
+            # Фрукты
+            'яблоко': 150, 'банан': 150, 'апельсин': 150, 'мандарин': 100,
+            'груша': 150, 'виноград': 150, 'клубника': 150, 'малина': 150,
+            'авокадо': 100, 'киви': 100, 'ананас': 200,
+            
+            # Овощи
+            'картофель': 200, 'картошка': 200, 'морковь': 100, 'лук': 50,
+            'огурец': 100, 'помидор': 100, 'перец': 100, 'капуста': 150,
+            'брокколи': 150, 'кабачок': 200, 'баклажан': 200,
+            
+            # Мясо
+            'мясо': 150, 'говядина': 150, 'свинина': 150, 'курица': 150,
+            'рыба': 150, 'лосось': 150, 'семга': 150,
+            
+            # Колбаса
+            'колбаса': 50, 'сосиски': 50, 'сардельки': 50, 'ветчина': 50,
             'сало': 30,
-            'яйцо': 50,
-            'яйца': 100,
-            'молоко': 200,
-            'кефир': 200,
-            'йогурт': 150,
-            'творог': 150,
-            'сметана': 20,
-            'масло': 10,
-            'кофе': 200,
-            'чай': 200,
-            'сок': 200,
-            'пиво': 500,
-            'вино': 150,
-            'водка': 50,
-            'виски': 50,
-            'коньяк': 50,
-            'суп': 300,
-            'борщ': 300,
-            'салат': 200,
-            'оливье': 200,
-            'винегрет': 200,
-            'шашлык': 200,
-            'пельмени': 200,
-            'котлеты': 150,
-            'блины': 150,
-            'пирожное': 100,
-            'торт': 150,
-            'шоколад': 20,
-            'конфета': 15,
-            'печенье': 30,
-            'арахис': 30,
-            'орехи': 30,
-            'яблоко': 150,
-            'банан': 150,
-            'апельсин': 150,
-            'авокадо': 100,
-            'картофель': 200,
-            'гречка': 200,
-            'рис': 200,
-            'макароны': 200,
+            
+            # Сыр
+            'сыр': 30,
+            
+            # Крупы
+            'гречка': 200, 'рис': 200, 'овсянка': 200, 'каша': 200,
+            'овсяная каша': 200, 'манка': 200, 'пшено': 200, 'перловка': 200,
+            'макароны': 200, 'паста': 200, 'спагетти': 200,
+            
+            # Супы
+            'суп': 300, 'борщ': 300, 'щи': 300, 'солянка': 300,
+            'окрошка': 300, 'уха': 300, 'рассольник': 300,
+            
+            # Салаты
+            'салат': 200, 'оливье': 200, 'винегрет': 200, 'цезарь': 200,
+            
+            # Вторые блюда
+            'пельмени': 200, 'вареники': 200, 'манты': 200, 'хинкали': 200,
+            'блины': 150, 'оладьи': 150, 'сырники': 150,
+            'котлеты': 150, 'тефтели': 150, 'фрикадельки': 150,
+            'шашлык': 200, 'кебаб': 200,
+            'пюре': 200, 'рагу': 200, 'жаркое': 250,
+            
+            # Сладости
+            'шоколад': 20, 'конфета': 15, 'печенье': 30, 'вафли': 30,
+            'пирожное': 100, 'торт': 150, 'кекс': 80,
+            'варенье': 20, 'джем': 20, 'мед': 20,
+            
+            # Орехи
+            'арахис': 30, 'орехи': 30, 'грецкие': 30, 'миндаль': 30,
+            'фундук': 30, 'кешью': 30, 'фисташки': 30,
+            
+            # Соусы
+            'кетчуп': 20, 'майонез': 20, 'горчица': 10,
         }
         
+        # Ищем по ключевым словам
         name_lower = name.lower()
-        for key, weight in keywords.items():
+        for key, portion in portions.items():
             if key in name_lower:
-                return weight
+                return portion
         
         return 100

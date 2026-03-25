@@ -19,7 +19,6 @@ class Database:
             
         print("🚀 Инициализация базы данных...")
         
-        # Создаем категории
         categories = {}
         cat_list = [
             ('dairy', 'Молочные продукты'),
@@ -48,7 +47,6 @@ class Database:
             session.flush()
             categories[name] = cat.id
         
-        # Базовые продукты для старта
         base_foods = [
             Food(name='cottage cheese 9%', name_ru='творог 9%', calories=169, proteins=18, fats=9, carbs=3, category_id=categories['dairy'], default_portion=150),
             Food(name='cottage cheese 5%', name_ru='творог 5%', calories=145, proteins=21, fats=5, carbs=3, category_id=categories['dairy'], default_portion=150),
@@ -81,8 +79,7 @@ class Database:
     
     def find_food(self, name):
         """
-        Улучшенный поиск продукта по названию
-        Приоритет: точное совпадение > начало названия > частичное совпадение
+        УНИВЕРСАЛЬНЫЙ поиск продукта в базе
         """
         session = self.Session()
         name = name.lower().strip()
@@ -93,47 +90,34 @@ class Database:
             session.close()
             return food
         
-        # 2. Поиск по началу названия (наиболее релевантное)
-        foods = session.query(Food).filter(Food.name_ru.ilike(f'{name}%')).all()
-        if foods:
-            # Сортируем по длине (самое короткое - самое точное)
-            foods.sort(key=lambda x: len(x.name_ru))
-            session.close()
-            return foods[0]
-        
-        # 3. Поиск по вхождению (частичное совпадение)
-        foods = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).all()
-        if foods:
-            # Сортируем по длине (самое короткое - самое общее, но лучше подходит)
-            foods.sort(key=lambda x: len(x.name_ru))
-            session.close()
-            return foods[0]
-        
-        # 4. Поиск по английскому названию
-        food = session.query(Food).filter(Food.name.ilike(f'%{name}%')).first()
+        # 2. Поиск по вхождению (самый важный для составных названий)
+        food = session.query(Food).filter(Food.name_ru.ilike(f'%{name}%')).first()
         if food:
             session.close()
             return food
         
-        # 5. Поиск по словам (если название состоит из нескольких слов)
-        words = name.split()
+        # 3. Поиск по словам (все слова должны быть в названии)
+        words = [w for w in name.split() if len(w) > 2]
+        if len(words) > 1:
+            query = session.query(Food)
+            for word in words:
+                query = query.filter(Food.name_ru.ilike(f'%{word}%'))
+            
+            foods = query.all()
+            if foods:
+                foods.sort(key=lambda x: len(x.name_ru))
+                session.close()
+                return foods[0]
+        
+        # 4. Поиск по одному слову
         for word in words:
-            if len(word) > 2:
-                foods = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).all()
-                if foods:
-                    foods.sort(key=lambda x: len(x.name_ru))
-                    session.close()
-                    return foods[0]
+            food = session.query(Food).filter(Food.name_ru.ilike(f'%{word}%')).first()
+            if food:
+                session.close()
+                return food
         
-        session.close()
-        return None
-    
-    def find_food_exact(self, name):
-        """Поиск с приоритетом точного совпадения"""
-        session = self.Session()
-        name = name.lower().strip()
-        
-        food = session.query(Food).filter(Food.name_ru == name).first()
+        # 5. Поиск по английскому названию
+        food = session.query(Food).filter(Food.name.ilike(f'%{name}%')).first()
         if food:
             session.close()
             return food
@@ -145,10 +129,7 @@ class Database:
         """Добавление приема пищи"""
         session = self.Session()
         
-        # Пытаемся найти точное совпадение
-        food = self.find_food_exact(food_name)
-        if not food:
-            food = self.find_food(food_name)
+        food = self.find_food(food_name)
         
         if not food:
             session.close()
@@ -178,14 +159,12 @@ class Database:
         return result
     
     def get_user(self, telegram_id):
-        """Получение пользователя"""
         session = self.Session()
         user = session.query(User).filter_by(telegram_id=telegram_id).first()
         session.close()
         return user
     
     def create_user(self, telegram_id):
-        """Создание пользователя"""
         session = self.Session()
         user = User(telegram_id=telegram_id)
         session.add(user)
@@ -194,7 +173,6 @@ class Database:
         return user
     
     def update_user_params(self, telegram_id, **kwargs):
-        """Обновление параметров пользователя"""
         session = self.Session()
         user = session.query(User).filter_by(telegram_id=telegram_id).first()
         if user:
@@ -210,7 +188,6 @@ class Database:
         session.close()
     
     def get_daily_summary(self, telegram_id, date=None):
-        """Статистика за день"""
         if not date:
             date = datetime.now().strftime('%Y-%m-%d')
             
