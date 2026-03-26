@@ -6,103 +6,62 @@ class FoodParser:
         self.db = Database()
     
     def parse_message(self, text):
-        """Разбор сообщения на части по запятым"""
+        """
+        Разбор сообщения на отдельные блюда/продукты
+        Возвращает список словарей с name и weight
+        """
         text = text.lower().strip()
+        
+        # Заменяем переносы и маркеры на запятые
         text = text.replace('\n', ',')
         text = text.replace('•', ',')
         text = re.sub(r'\s+', ' ', text)
         
+        # Разделяем по запятым
         parts = [p.strip() for p in text.split(',') if p.strip()]
         
-        results = []
+        # Дополнительное разделение по "и"
+        final_parts = []
         for part in parts:
+            if ' и ' in part:
+                subparts = [p.strip() for p in part.split(' и ')]
+                final_parts.extend(subparts)
+            else:
+                final_parts.append(part)
+        
+        results = []
+        for part in final_parts:
             items = self._parse_part(part)
             results.extend(items)
         
         return results
     
     def _parse_part(self, text):
-        """Парсит одну часть (все что до запятой)"""
+        """
+        Парсит одну часть (до запятой)
+        Возвращает список продуктов с весами
+        """
         if not text:
             return []
         
         print(f"\n📝 Парсим: '{text}'")
         
-        # Специальные случаи
+        # Специальная обработка для яичницы (нужно считать количество яиц)
         if 'яичница' in text:
             return self._parse_eggs(text)
         
-        # Разбиваем на компоненты
-        components = self._split_into_components(text)
-        print(f"   Компоненты: {components}")
+        # Специальная обработка для бутерброда
+        if 'бутерброд' in text:
+            return self._parse_sandwich(text)
         
-        results = []
-        for comp in components:
-            # Пропускаем предлоги и слово бутерброд
-            if comp in ['с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но', 
-                       'бутерброд', 'бутерброда', 'бутерброде', 'бутербродом']:
-                continue
-            
-            # Пропускаем короткие слова
-            if len(comp) < 2:
-                continue
-            
-            # Определяем количество и вес
-            quantity, clean_comp = self._extract_quantity(comp)
-            weight = self._extract_weight(clean_comp)
-            name = self._clean_name(clean_comp)
-            
-            if not name:
-                continue
-            
-            if weight == 0:
-                weight = self._get_default_weight(name)
-            
-            if quantity > 1:
-                weight = weight * quantity
-            
-            # Нормализуем название
-            name = self._normalize_name(name)
-            
-            # Ищем в базе
-            food = self.db.find_food(name)
-            if food:
-                results.append({'name': food.name_ru, 'weight': weight})
-                print(f"   ✅ Найден: {food.name_ru} ({weight}г)")
-            else:
-                print(f"   ❌ Не найден: {name}")
-        
-        return results
-    
-    def _split_into_components(self, text):
-        """Разбивает текст на компоненты"""
-        # Убираем слово "бутерброд" и его формы
-        text = re.sub(r'\bбутерброд\w*\b', '', text)
-        
-        # Заменяем союзы и предлоги на разделители
-        separators = [' с ', ' со ', ' и ', ' из ', ' на ', ' в ', ',', 'а также', 'плюс']
-        for sep in separators:
-            text = text.replace(sep, ' | ')
-        
-        # Убираем множественные пробелы
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Разбиваем по разделителю
-        components = [c.strip() for c in text.split('|') if c.strip()]
-        
-        # Если ничего не разбилось, очищаем от предлогов в начале
-        if not components and text:
-            clean_text = re.sub(r'^(с|со|из|на|в)\s+', '', text)
-            if clean_text:
-                return [clean_text]
-            return [text]
-        
-        return components
+        # Для всего остального - разбиваем на слова и ищем каждое
+        return self._parse_words(text)
     
     def _parse_eggs(self, text):
         """Разбирает яичницу"""
-        print("   🍳 Обнаружена яичница")
+        print("   🍳 Яичница")
         
+        # Ищем количество яиц
         match = re.search(r'(\d+)\s*яйц', text)
         if match:
             egg_count = int(match.group(1))
@@ -112,93 +71,117 @@ class FoodParser:
         weight = egg_count * 50
         print(f"   Яиц: {egg_count}, вес: {weight}г")
         
-        # Сначала ищем яичницу
-        food = self.db.find_food("яичница глазунья")
-        if food:
-            return [{'name': food.name_ru, 'weight': weight}]
+        # Ищем в базе
+        food = self.db.find_food_by_word("яичница")
+        if not food:
+            food = self.db.find_food_by_word("яйца")
         
-        # Если нет, ищем яйца
-        food = self.db.find_food("яйца")
         if food:
             return [{'name': food.name_ru, 'weight': weight}]
         
         return []
     
-    def _extract_quantity(self, text):
-        """Извлекает количество"""
-        patterns = [
-            (r'^(\d+)\s+(.+)', 1),
-            (r'(.+)\s+(\d+)\s*шт', 2),
-        ]
+    def _parse_sandwich(self, text):
+        """Разбирает бутерброд на ингредиенты"""
+        print("   🥪 Бутерброд")
         
-        for pattern, group in patterns:
-            match = re.match(pattern, text)
-            if match:
-                if group == 1:
-                    return int(match.group(1)), match.group(2)
+        results = []
+        
+        # Добавляем хлеб (50г)
+        bread = self.db.find_food_by_word("хлеб")
+        if bread:
+            results.append({'name': bread.name_ru, 'weight': 50})
+            print(f"   ✅ Хлеб: {bread.name_ru} (50г)")
+        
+        # Ищем начинку (семга, авокадо, сыр, колбаса и т.д.)
+        fillings = ['семга', 'лосось', 'форель', 'авокадо', 'сыр', 'колбаса', 'ветчина', 'курица']
+        
+        for filling in fillings:
+            if filling in text:
+                food = self.db.find_food_by_word(filling)
+                if food:
+                    # Вес начинки для бутерброда - 50-80г
+                    weight = 70 if filling == 'авокадо' else 50
+                    results.append({'name': food.name_ru, 'weight': weight})
+                    print(f"   ✅ Начинка: {food.name_ru} ({weight}г)")
+        
+        return results
+    
+    def _parse_words(self, text):
+        """
+        Разбивает текст на слова и ищет каждое
+        """
+        # Убираем вес из текста
+        weight_match = re.search(r'(\d+)\s*г', text)
+        explicit_weight = int(weight_match.group(1)) if weight_match else None
+        
+        # Очищаем текст от веса
+        clean_text = re.sub(r'\d+\s*г', '', text)
+        
+        # Разбиваем на слова
+        words = clean_text.split()
+        
+        # Убираем предлоги
+        stop_words = ['с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но', 'для', 'без', 'по']
+        words = [w for w in words if w not in stop_words]
+        
+        print(f"   Слова для поиска: {words}")
+        
+        results = []
+        
+        for word in words:
+            # Пропускаем короткие слова
+            if len(word) < 2:
+                continue
+            
+            # Нормализуем слово
+            word = self._normalize(word)
+            
+            # Ищем в базе
+            food = self.db.find_food_by_word(word)
+            
+            if food:
+                # Определяем вес
+                if explicit_weight:
+                    weight = explicit_weight
                 else:
-                    return int(match.group(2)), match.group(1)
+                    weight = self._get_default_weight(word)
+                
+                results.append({'name': food.name_ru, 'weight': weight})
+                print(f"   ✅ Найден: {food.name_ru} ({weight}г)")
+            else:
+                print(f"   ❌ Не найден: {word}")
         
-        return 1, text
+        return results
     
-    def _extract_weight(self, text):
-        """Извлекает вес"""
-        patterns = [
-            (r'(\d+)\s*г(?:рамм)?', 1),
-            (r'(\d+)\s*гр', 1),
-            (r'(\d+)\s*мл', 1),
-        ]
-        
-        for pattern, multiplier in patterns:
-            match = re.search(pattern, text)
-            if match:
-                return int(match.group(1)) * multiplier
-        return 0
-    
-    def _clean_name(self, text):
-        """Очищает название от веса и предлогов"""
-        # Удаляем вес
-        text = re.sub(r'\d+\s*г(?:рамм)?', '', text)
-        text = re.sub(r'\d+\s*гр', '', text)
-        text = re.sub(r'\d+\s*мл', '', text)
-        text = re.sub(r'\d+\s*шт', '', text)
-        
-        # Убираем предлоги в начале
-        text = re.sub(r'^(с|со|из|на|в|для|без)\s+', '', text)
-        
-        return text.strip()
-    
-    def _normalize_name(self, name):
-        """Нормализует название для поиска в базе"""
-        name_lower = name.lower()
-        
+    def _normalize(self, word):
+        """Нормализует слово для поиска"""
         synonyms = {
-            'овсянка': 'овсяная каша',
-            'гречка': 'гречневая каша',
-            'манка': 'манная каша',
-            'пшенка': 'пшенная каша',
-            'перловка': 'перловая каша',
+            'овсянка': 'овсяная',
+            'гречка': 'гречневая',
+            'манка': 'манная',
+            'пшенка': 'пшенная',
+            'перловка': 'перловая',
             'картошка': 'картофель',
             'помидор': 'томат',
             'семга': 'семга',
             'авокадо': 'авокадо',
-            'бородинский хлеб': 'хлеб бородинский',
-            'бородинский': 'хлеб бородинский',
-            'белый хлеб': 'хлеб белый',
-            'черный хлеб': 'хлеб черный',
-            'ржаной хлеб': 'хлеб ржаной',
         }
         
-        for key, value in synonyms.items():
-            if key == name_lower or key in name_lower:
-                return value
+        if word in synonyms:
+            return synonyms[word]
         
-        return name
+        # Убираем окончания
+        if word.endswith('ая') and len(word) > 2:
+            return word[:-2]  # овсяная -> овсян
+        
+        if word.endswith('ой') and len(word) > 2:
+            return word[:-2]  # семгой -> семг
+        
+        return word
     
-    def _get_default_weight(self, name):
-        """Стандартный вес для продукта"""
-        name_lower = name.lower()
-        
+    def _get_default_weight(self, word):
+        """Стандартный вес для слова"""
         portions = {
             'кофе': 200, 'чай': 200, 'сок': 200,
             'молоко': 200, 'кефир': 200, 'йогурт': 150,
@@ -207,16 +190,14 @@ class FoodParser:
             'яйцо': 50, 'яичница': 200,
             'яблоко': 150, 'банан': 150,
             'картофель': 200,
-            'овсяная каша': 250, 'гречневая каша': 250,
-            'манная каша': 250, 'рисовая каша': 250,
+            'овсяная': 250, 'гречневая': 250, 'манная': 250,
             'каша': 250,
-            'суп': 300, 'борщ': 300,
+            'суп': 350, 'борщ': 350, 'щи': 350, 'солянка': 350,
             'салат': 200, 'пельмени': 200, 'шашлык': 200,
-            'семга': 100, 'авокадо': 100, 'сыр': 30, 'масло сливочное': 10,
+            'семга': 80, 'авокадо': 80, 'сыр': 30,
         }
         
         for key, portion in portions.items():
-            if key in name_lower:
+            if key in word:
                 return portion
-        
         return 100

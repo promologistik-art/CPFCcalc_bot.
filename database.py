@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, or_
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models import Base, Food, FoodCategory, User, MealEntry
 from datetime import datetime
@@ -133,20 +133,20 @@ class Database:
     def _detect_category(self, name):
         name_lower = name.lower()
         cats = {
-            'dairy': ['молоко', 'кефир', 'йогурт', 'творог', 'сыр', 'сметана', 'сливки'],
-            'meat': ['говядина', 'свинина', 'телятина', 'баранина', 'колбаса', 'ветчина', 'бекон'],
-            'poultry': ['курица', 'индейка', 'утка', 'гусь', 'цыпленок'],
-            'fish': ['рыба', 'лосось', 'семга', 'форель', 'сельдь', 'треска', 'минтай', 'креветка'],
-            'eggs': ['яйцо', 'яйца', 'омлет'],
+            'dairy': ['молоко', 'кефир', 'йогурт', 'творог', 'сыр', 'сметана'],
+            'meat': ['говядина', 'свинина', 'телятина', 'баранина', 'колбаса'],
+            'poultry': ['курица', 'индейка', 'утка', 'гусь'],
+            'fish': ['рыба', 'лосось', 'семга', 'форель', 'сельдь', 'треска', 'минтай'],
+            'eggs': ['яйцо', 'яйца', 'омлет', 'яичница'],
             'vegetables': ['картофель', 'капуста', 'морковь', 'свекла', 'лук', 'огурец', 'помидор'],
-            'fruits': ['яблоко', 'банан', 'апельсин', 'груша', 'виноград', 'клубника'],
-            'grains': ['гречка', 'рис', 'овсянка', 'пшено', 'манка', 'макароны', 'паста'],
+            'fruits': ['яблоко', 'банан', 'апельсин', 'груша', 'виноград'],
+            'grains': ['гречка', 'рис', 'овсянка', 'пшено', 'манка', 'макароны'],
             'bakery': ['хлеб', 'батон', 'булка', 'лаваш'],
             'drinks': ['кофе', 'чай', 'сок', 'компот', 'пиво', 'вино'],
             'sweets': ['шоколад', 'конфета', 'печенье', 'варенье', 'мед', 'сахар'],
-            'soups': ['суп', 'борщ', 'щи', 'солянка', 'окрошка', 'уха'],
+            'soups': ['суп', 'борщ', 'щи', 'солянка', 'окрошка', 'уха', 'рассольник'],
             'salads': ['салат', 'оливье', 'винегрет', 'цезарь'],
-            'fastfood': ['бургер', 'пицца', 'шаурма', 'хот-дог'],
+            'fastfood': ['бургер', 'пицца', 'шаурма'],
         }
         for cat, keywords in cats.items():
             for kw in keywords:
@@ -159,109 +159,160 @@ class Database:
         portions = {
             'кофе': 200, 'чай': 200, 'сок': 200, 'молоко': 200, 'кефир': 200,
             'йогурт': 150, 'творог': 150, 'сметана': 20, 'хлеб': 30,
-            'яблоко': 150, 'банан': 150, 'картофель': 200, 'суп': 300,
-            'борщ': 300, 'салат': 200, 'гречка': 200, 'рис': 200,
-            'овсянка': 200, 'макароны': 200, 'шашлык': 200, 'пельмени': 200,
+            'яблоко': 150, 'банан': 150, 'картофель': 200,
+            'гречка': 200, 'рис': 200, 'овсянка': 200, 'макароны': 200,
+            'суп': 350, 'борщ': 350, 'щи': 350, 'солянка': 350,
+            'салат': 200, 'шашлык': 200, 'пельмени': 200,
         }
         for key, portion in portions.items():
             if key in name_lower:
                 return portion
         return 100
 
-    def find_food(self, name):
+    def find_food_by_word(self, word):
         """
-        Ищет ВСЕ подходящие продукты и возвращает самый похожий
+        Ищет продукт по одному слову
         """
         session = self.Session()
-        query = name.lower().strip()
+        word = word.lower().strip()
         
-        print(f"🔍 Ищем: '{query}'")
+        print(f"      🔍 Ищем слово: '{word}'")
         
-        # Разбиваем на слова (убираем короткие и стоп-слова)
-        stop_words = {'на', 'в', 'с', 'со', 'из', 'для', 'без', 'по', 'и', 'или', 'с', 'со'}
-        words = [w for w in query.split() if len(w) > 2 and w not in stop_words]
-        
-        if not words:
+        # 1. Точное совпадение
+        food = session.query(Food).filter(Food.name_ru == word).first()
+        if food:
+            print(f"      ✅ Точное: {food.name_ru}")
             session.close()
-            return None
+            return food
         
-        print(f"   Слова для поиска: {words}")
-        
-        # Ищем ВСЕ продукты, содержащие любое из слов
-        conditions = [Food.name_ru.ilike(f'%{word}%') for word in words]
-        all_foods = session.query(Food).filter(or_(*conditions)).all()
-        
-        if not all_foods:
-            print("❌ Ничего не найдено")
+        # 2. Название начинается с искомого слова
+        food = session.query(Food).filter(Food.name_ru.ilike(f'{word}%')).first()
+        if food:
+            print(f"      ✅ Начинается с: {food.name_ru}")
             session.close()
-            return None
+            return food
         
-        # Вычисляем релевантность для каждого
-        scored = []
+        # 3. Ищем по отдельным словам в названии
+        all_foods = session.query(Food).all()
         for food in all_foods:
-            food_name = food.name_ru.lower()
-            score = 0
-            
-            # Считаем, сколько слов из запроса есть в названии
-            for word in words:
-                if word in food_name:
-                    score += 10
-            
-            # Бонус за точное совпадение
-            if food_name == query:
-                score += 100
-            
-            # Бонус, если название начинается с искомого
-            for word in words:
-                if food_name.startswith(word):
-                    score += 20
-            
-            # Бонус за совпадение фразы
-            if query in food_name:
-                score += 50
-            
-            # Штраф за длинное название (для общих запросов)
-            score -= len(food_name) * 0.05
-            
-            scored.append((food, score))
+            food_words = food.name_ru.lower().split()
+            if word in food_words:
+                print(f"      ✅ Найдено по слову: {food.name_ru}")
+                session.close()
+                return food
         
-        # Сортируем по убыванию релевантности
-        scored.sort(key=lambda x: x[1], reverse=True)
-        
-        # Выводим топ-3 для отладки
-        print(f"📊 Найдено {len(scored)} продуктов, топ-3:")
-        for i, (food, score) in enumerate(scored[:3]):
-            print(f"   {i+1}. {food.name_ru} (score: {score:.0f})")
-        
-        best = scored[0][0]
-        print(f"✅ Выбран: {best.name_ru}")
+        print(f"      ❌ Не найдено")
         session.close()
-        return best
+        return None
 
     def add_meal(self, telegram_id, food_name, weight, meal_type='breakfast'):
         session = self.Session()
-        food = self.find_food(food_name)
-        if not food:
+        
+        # Разбиваем на слова
+        words = food_name.lower().split()
+        print(f"   Разбор: {words}")
+        
+        results = []
+        
+        for word in words:
+            # Пропускаем предлоги
+            if word in ['с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но']:
+                continue
+            
+            # Специальная обработка для бутерброда
+            if word in ['бутерброд', 'бутерброда', 'бутерброде']:
+                # Добавляем хлеб
+                bread = self.find_food_by_word("хлеб")
+                if bread:
+                    results.append({
+                        'name': bread.name_ru,
+                        'weight': 50,
+                        'calories': bread.calories * 0.5,
+                        'proteins': bread.proteins * 0.5,
+                        'fats': bread.fats * 0.5,
+                        'carbs': bread.carbs * 0.5
+                    })
+                    print(f"      ✅ Добавлен хлеб для бутерброда: {bread.name_ru} (50г)")
+                continue
+            
+            # Ищем продукт по слову
+            food = self.find_food_by_word(word)
+            if food:
+                # Определяем вес
+                if 'яичница' in word:
+                    # Яичница: считаем количество яиц
+                    match = re.search(r'(\d+)\s*яйц', food_name)
+                    if match:
+                        egg_count = int(match.group(1))
+                        weight = egg_count * 50
+                    else:
+                        weight = 200
+                else:
+                    weight = self._get_portion(word)
+                
+                results.append({
+                    'name': food.name_ru,
+                    'weight': weight,
+                    'calories': food.calories * weight / 100,
+                    'proteins': food.proteins * weight / 100,
+                    'fats': food.fats * weight / 100,
+                    'carbs': food.carbs * weight / 100
+                })
+                print(f"      ✅ Найден: {food.name_ru} ({weight}г)")
+        
+        if not results:
             session.close()
             return None
-
-        meal = MealEntry(
-            user_id=telegram_id, food_id=food.id, weight=weight,
-            date=datetime.now().strftime('%Y-%m-%d'), meal_type=meal_type
-        )
-        session.add(meal)
+        
+        # Сохраняем каждый найденный продукт
+        for result in results:
+            meal = MealEntry(
+                user_id=telegram_id,
+                food_id=session.query(Food).filter(Food.name_ru == result['name']).first().id,
+                weight=result['weight'],
+                date=datetime.now().strftime('%Y-%m-%d'),
+                meal_type=meal_type
+            )
+            session.add(meal)
+        
         session.commit()
-
-        k = weight / 100
-        result = {
-            'name': food.name_ru, 'weight': weight,
-            'calories': round(food.calories * k, 1),
-            'proteins': round(food.proteins * k, 1),
-            'fats': round(food.fats * k, 1),
-            'carbs': round(food.carbs * k, 1)
+        
+        # Возвращаем итог
+        total = {
+            'calories': sum(r['calories'] for r in results),
+            'proteins': sum(r['proteins'] for r in results),
+            'fats': sum(r['fats'] for r in results),
+            'carbs': sum(r['carbs'] for r in results)
         }
+        
         session.close()
-        return result
+        
+        return {
+            'items': results,
+            'total': total
+        }
+
+    def _get_portion(self, word):
+        """Стандартный вес для слова"""
+        portions = {
+            'кофе': 200, 'чай': 200, 'сок': 200,
+            'молоко': 200, 'кефир': 200, 'йогурт': 150,
+            'творог': 150, 'сметана': 20,
+            'хлеб': 50,
+            'яйцо': 50, 'яичница': 200,
+            'яблоко': 150, 'банан': 150,
+            'картофель': 200,
+            'овсяная': 250, 'гречневая': 250, 'манная': 250,
+            'каша': 250,
+            'суп': 350, 'борщ': 350, 'щи': 350, 'солянка': 350,
+            'салат': 200, 'пельмени': 200, 'шашлык': 200,
+            'семга': 80, 'авокадо': 80, 'сыр': 30,
+        }
+        
+        for key, portion in portions.items():
+            if key in word:
+                return portion
+        return 100
 
     def get_user(self, telegram_id):
         session = self.Session()
