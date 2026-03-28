@@ -205,114 +205,45 @@ class Database:
         session.close()
         return None
 
-    def add_meal(self, telegram_id, food_name, weight, meal_type='breakfast'):
+    def add_meal_item(self, telegram_id, food_id, weight, meal_type='breakfast'):
+        """
+        Добавляет один продукт в прием пищи
+        """
         session = self.Session()
         
-        # Разбиваем на слова
-        words = food_name.lower().split()
-        print(f"   Разбор: {words}")
-        
-        results = []
-        
-        for word in words:
-            # Пропускаем предлоги
-            if word in ['с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но']:
-                continue
+        try:
+            food = session.query(Food).filter(Food.id == food_id).first()
+            if not food:
+                session.close()
+                return None
             
-            # Специальная обработка для бутерброда
-            if word in ['бутерброд', 'бутерброда', 'бутерброде']:
-                # Добавляем хлеб
-                bread = self.find_food_by_word("хлеб")
-                if bread:
-                    results.append({
-                        'name': bread.name_ru,
-                        'weight': 50,
-                        'calories': bread.calories * 0.5,
-                        'proteins': bread.proteins * 0.5,
-                        'fats': bread.fats * 0.5,
-                        'carbs': bread.carbs * 0.5
-                    })
-                    print(f"      ✅ Добавлен хлеб для бутерброда: {bread.name_ru} (50г)")
-                continue
-            
-            # Ищем продукт по слову
-            food = self.find_food_by_word(word)
-            if food:
-                # Определяем вес
-                if 'яичница' in word:
-                    # Яичница: считаем количество яиц
-                    match = re.search(r'(\d+)\s*яйц', food_name)
-                    if match:
-                        egg_count = int(match.group(1))
-                        weight = egg_count * 50
-                    else:
-                        weight = 200
-                else:
-                    weight = self._get_portion(word)
-                
-                results.append({
-                    'name': food.name_ru,
-                    'weight': weight,
-                    'calories': food.calories * weight / 100,
-                    'proteins': food.proteins * weight / 100,
-                    'fats': food.fats * weight / 100,
-                    'carbs': food.carbs * weight / 100
-                })
-                print(f"      ✅ Найден: {food.name_ru} ({weight}г)")
-        
-        if not results:
-            session.close()
-            return None
-        
-        # Сохраняем каждый найденный продукт
-        for result in results:
             meal = MealEntry(
                 user_id=telegram_id,
-                food_id=session.query(Food).filter(Food.name_ru == result['name']).first().id,
-                weight=result['weight'],
+                food_id=food_id,
+                weight=weight,
                 date=datetime.now().strftime('%Y-%m-%d'),
                 meal_type=meal_type
             )
             session.add(meal)
-        
-        session.commit()
-        
-        # Возвращаем итог
-        total = {
-            'calories': sum(r['calories'] for r in results),
-            'proteins': sum(r['proteins'] for r in results),
-            'fats': sum(r['fats'] for r in results),
-            'carbs': sum(r['carbs'] for r in results)
-        }
-        
-        session.close()
-        
-        return {
-            'items': results,
-            'total': total
-        }
-
-    def _get_portion(self, word):
-        """Стандартный вес для слова"""
-        portions = {
-            'кофе': 200, 'чай': 200, 'сок': 200,
-            'молоко': 200, 'кефир': 200, 'йогурт': 150,
-            'творог': 150, 'сметана': 20,
-            'хлеб': 50,
-            'яйцо': 50, 'яичница': 200,
-            'яблоко': 150, 'банан': 150,
-            'картофель': 200,
-            'овсяная': 250, 'гречневая': 250, 'манная': 250,
-            'каша': 250,
-            'суп': 350, 'борщ': 350, 'щи': 350, 'солянка': 350,
-            'салат': 200, 'пельмени': 200, 'шашлык': 200,
-            'семга': 80, 'авокадо': 80, 'сыр': 30,
-        }
-        
-        for key, portion in portions.items():
-            if key in word:
-                return portion
-        return 100
+            session.commit()
+            
+            k = weight / 100
+            result = {
+                'name': food.name_ru,
+                'weight': weight,
+                'calories': round(food.calories * k, 1),
+                'proteins': round(food.proteins * k, 1),
+                'fats': round(food.fats * k, 1),
+                'carbs': round(food.carbs * k, 1)
+            }
+            
+            session.close()
+            return result
+            
+        except Exception as e:
+            print(f"Ошибка при добавлении приема пищи: {e}")
+            session.close()
+            return None
 
     def get_user(self, telegram_id):
         session = self.Session()
@@ -354,9 +285,12 @@ class Database:
             food = meal.food
             k = meal.weight / 100
             data = {
-                'name': food.name_ru, 'weight': meal.weight,
-                'calories': food.calories * k, 'proteins': food.proteins * k,
-                'fats': food.fats * k, 'carbs': food.carbs * k
+                'name': food.name_ru,
+                'weight': meal.weight,
+                'calories': food.calories * k,
+                'proteins': food.proteins * k,
+                'fats': food.fats * k,
+                'carbs': food.carbs * k
             }
             meals_by_type[meal.meal_type].append(data)
             for key in total:
