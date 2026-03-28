@@ -170,9 +170,7 @@ class Database:
         return 100
 
     def find_food_by_word(self, query):
-    """
-    Находит продукт по запросу
-    """
+    
     session = self.Session()
     query = query.lower().strip()
     
