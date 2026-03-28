@@ -398,24 +398,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"🍽 Что вы съели на {meal_names[meal_type]}?")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка сообщений от пользователя"""
     user_id = update.effective_user.id
     text = update.message.text
     
-    # Проверяем, ожидаем ли мы ввод параметров
     if 'awaiting' in context.user_data:
         await handle_parameter_input(update, context)
         return
     
-    # Получаем тип приема пищи (если выбран)
     meal_type = context.user_data.get('meal_type', 'breakfast')
     
-    # Парсим сообщение через FoodParser
+    # Парсим сообщение
     items = parser.parse_message(text)
     
     if not items:
         await update.message.reply_text(
-            "😕 Не удалось распознать продукты. Попробуйте:\n"
+            "😕 Не удалось распознать. Попробуйте:\n"
             "• 100г творог 9%\n"
             "• бутерброд с колбасой\n"
             "• кофе 2 ложки сахара\n"
@@ -428,15 +425,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     meal_items = []
     not_found = []
     
-    # Обрабатываем каждый найденный продукт
     for item in items:
-        # Ищем продукт в базе по названию
+        # Ищем в базе
         food = db.find_food_by_word(item['name'])
         
         if food:
-            # Сохраняем прием пищи
             result = db.add_meal_item(user_id, food.id, item['weight'], meal_type)
-            
             if result:
                 meal_items.append(result)
                 total['calories'] += result['calories']
@@ -447,10 +441,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             not_found.append(item['name'])
     
     if not meal_items:
-        await update.message.reply_text(
-            "😕 Не удалось найти продукты в базе.\n"
-            "Попробуйте написать точнее или подождите обновления базы."
-        )
+        await update.message.reply_text("😕 Не удалось найти продукты в базе.")
         return
     
     user = db.get_user(user_id)
@@ -485,19 +476,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response += f"🔸 Углеводы: {total['carbs']:.1f}г\n"
     
     keyboard = [
-        [
-            InlineKeyboardButton("🍳 Завтрак", callback_data='meal_breakfast'),
-            InlineKeyboardButton("🍲 Обед", callback_data='meal_lunch'),
-        ],
-        [
-            InlineKeyboardButton("🍽 Ужин", callback_data='meal_dinner'),
-            InlineKeyboardButton("🍎 Перекус", callback_data='meal_snack'),
-        ],
+        [InlineKeyboardButton("🍳 Завтрак", callback_data='meal_breakfast'),
+         InlineKeyboardButton("🍲 Обед", callback_data='meal_lunch')],
+        [InlineKeyboardButton("🍽 Ужин", callback_data='meal_dinner'),
+         InlineKeyboardButton("🍎 Перекус", callback_data='meal_snack')],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(response, reply_markup=reply_markup)
-
+    await update.message.reply_text(response, reply_markup=InlineKeyboardMarkup(keyboard))
 async def handle_parameter_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка ввода параметров пользователя"""
     user_id = update.effective_user.id
