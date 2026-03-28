@@ -170,93 +170,72 @@ class Database:
         return 100
 
     def find_food_by_word(self, query):
-    
-    session = self.Session()
-    query = query.lower().strip()
-    
-    print(f"      🔍 Поиск: '{query}'")
-    
-    # Разбиваем запрос на значимые слова
-    stop_words = {'с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но', 'для', 'без', 'по'}
-    keywords = [w for w in query.split() if w not in stop_words and len(w) > 2]
-    
-    if not keywords:
-        session.close()
-        return None
-    
-    print(f"      Ключевые слова: {keywords}")
-    
-    # Получаем все продукты
-    all_foods = session.query(Food).all()
-    
-    scored = []
-    for food in all_foods:
-        food_name = food.name_ru.lower()
-        score = 0
+        """
+        Находит продукт по запросу
+        """
+        session = self.Session()
+        query = query.lower().strip()
         
-        # Считаем, сколько ключевых слов есть в названии
-        matched = 0
-        for word in keywords:
-            if word in food_name:
-                matched += 1
-                score += 30
+        print(f"      🔍 Поиск: '{query}'")
         
-        # Бонус за совпадение нескольких слов
-        if matched == len(keywords):
-            score += 100
+        # Разбиваем запрос на значимые слова
+        stop_words = {'с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но', 'для', 'без', 'по'}
+        keywords = [w for w in query.split() if w not in stop_words and len(w) > 2]
         
-        # Бонус за короткое название (приоритет простым продуктам)
-        score += 50 - len(food_name)
+        if not keywords:
+            session.close()
+            return None
         
-        # Штраф за бренды и мусорные слова
-        bad_words = ['чипсы', 'lays', 'bombbar', 'протеин', 'fitkit', 'nestle', 
-                     'активиа', 'детский', 'baby', 'приправа', 'соус']
-        for bw in bad_words:
-            if bw in food_name:
-                score -= 100
-                break
+        print(f"      Ключевые слова: {keywords}")
         
-        # Специальные правила для конкретных запросов
-        if 'бутерброд' in query:
-            if 'хлеб' in food_name:
-                score += 50
-            if 'колбаса' in query and 'колбаса' in food_name:
-                score += 50
-            if '7up' in food_name or 'пепси' in food_name or 'кола' in food_name:
-                score -= 200  # штраф для напитков
+        # Получаем все продукты
+        all_foods = session.query(Food).all()
         
-        if 'борщ' in query:
-            if 'сметана' in query and 'сметана' in food_name:
-                score += 50
-            if 'блины' in food_name:
-                score -= 200  # штраф для блинов
-            if 'приправа' in food_name:
-                score -= 100  # штраф для приправ
-        
-        if 'шашлык' in query:
-            if 'чипсы' in food_name:
-                score -= 200
-            if 'шашлык' in food_name and 'чипсы' not in food_name:
+        scored = []
+        for food in all_foods:
+            food_name = food.name_ru.lower()
+            score = 0
+            
+            # Считаем, сколько ключевых слов есть в названии
+            matched = 0
+            for word in keywords:
+                if word in food_name:
+                    matched += 1
+                    score += 30
+            
+            # Бонус за совпадение нескольких слов
+            if matched == len(keywords):
                 score += 100
+            
+            # Бонус за короткое название
+            score += 50 - len(food_name)
+            
+            # Штраф за мусорные слова
+            bad_words = ['чипсы', 'lays', 'bombbar', 'протеин', 'fitkit', 'nestle', 
+                         'активиа', 'детский', 'baby', 'приправа', 'соус']
+            for bw in bad_words:
+                if bw in food_name:
+                    score -= 100
+                    break
+            
+            if score > 0:
+                scored.append((food, score))
         
-        if score > 0:
-            scored.append((food, score))
-    
-    if not scored:
-        print(f"      ❌ Не найдено")
+        if not scored:
+            print(f"      ❌ Не найдено")
+            session.close()
+            return None
+        
+        scored.sort(key=lambda x: x[1], reverse=True)
+        
+        print(f"      📊 Топ-3:")
+        for i, (food, score) in enumerate(scored[:3]):
+            print(f"         {i+1}. {food.name_ru} (score: {score})")
+        
+        best = scored[0][0]
+        print(f"      ✅ Выбран: {best.name_ru}")
         session.close()
-        return None
-    
-    scored.sort(key=lambda x: x[1], reverse=True)
-    
-    print(f"      📊 Топ-3:")
-    for i, (food, score) in enumerate(scored[:3]):
-        print(f"         {i+1}. {food.name_ru} (score: {score})")
-    
-    best = scored[0][0]
-    print(f"      ✅ Выбран: {best.name_ru}")
-    session.close()
-    return best
+        return best
 
     def add_meal_item(self, telegram_id, food_id, weight, meal_type='breakfast'):
         session = self.Session()
