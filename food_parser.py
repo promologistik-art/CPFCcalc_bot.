@@ -8,7 +8,6 @@ class FoodParser:
     def parse_message(self, text):
         """
         Разбор сообщения на отдельные блюда/продукты
-        Возвращает список словарей с name и weight
         """
         text = text.lower().strip()
         
@@ -20,17 +19,11 @@ class FoodParser:
         # Разделяем по запятым
         parts = [p.strip() for p in text.split(',') if p.strip()]
         
-        # Дополнительное разделение по "и"
-        final_parts = []
-        for part in parts:
-            if ' и ' in part:
-                subparts = [p.strip() for p in part.split(' и ')]
-                final_parts.extend(subparts)
-            else:
-                final_parts.append(part)
+        print(f"📝 Исходный текст: {text}")
+        print(f"📝 Части: {parts}")
         
         results = []
-        for part in final_parts:
+        for part in parts:
             items = self._parse_part(part)
             results.extend(items)
         
@@ -39,165 +32,130 @@ class FoodParser:
     def _parse_part(self, text):
         """
         Парсит одну часть (до запятой)
-        Возвращает список продуктов с весами
         """
         if not text:
             return []
         
-        print(f"\n📝 Парсим: '{text}'")
+        print(f"\n📝 Парсим часть: '{text}'")
         
-        # Специальная обработка для яичницы (нужно считать количество яиц)
-        if 'яичница' in text:
-            return self._parse_eggs(text)
-        
-        # Специальная обработка для бутерброда
-        if 'бутерброд' in text:
-            return self._parse_sandwich(text)
-        
-        # Для всего остального - разбиваем на слова и ищем каждое
-        return self._parse_words(text)
-    
-    def _parse_eggs(self, text):
-        """Разбирает яичницу"""
-        print("   🍳 Яичница")
-        
-        # Ищем количество яиц
-        match = re.search(r'(\d+)\s*яйц', text)
-        if match:
-            egg_count = int(match.group(1))
-        else:
-            egg_count = 2
-        
-        weight = egg_count * 50
-        print(f"   Яиц: {egg_count}, вес: {weight}г")
-        
-        # Ищем в базе
-        food = self.db.find_food_by_word("яичница")
-        if not food:
-            food = self.db.find_food_by_word("яйца")
-        
-        if food:
-            return [{'name': food.name_ru, 'weight': weight}]
-        
-        return []
-    
-    def _parse_sandwich(self, text):
-        """Разбирает бутерброд на ингредиенты"""
-        print("   🥪 Бутерброд")
-        
-        results = []
-        
-        # Добавляем хлеб (50г)
-        bread = self.db.find_food_by_word("хлеб")
-        if bread:
-            results.append({'name': bread.name_ru, 'weight': 50})
-            print(f"   ✅ Хлеб: {bread.name_ru} (50г)")
-        
-        # Ищем начинку (семга, авокадо, сыр, колбаса и т.д.)
-        fillings = ['семга', 'лосось', 'форель', 'авокадо', 'сыр', 'колбаса', 'ветчина', 'курица']
-        
-        for filling in fillings:
-            if filling in text:
-                food = self.db.find_food_by_word(filling)
-                if food:
-                    # Вес начинки для бутерброда - 50-80г
-                    weight = 70 if filling == 'авокадо' else 50
-                    results.append({'name': food.name_ru, 'weight': weight})
-                    print(f"   ✅ Начинка: {food.name_ru} ({weight}г)")
-        
-        return results
-    
-    def _parse_words(self, text):
-        """
-        Разбивает текст на слова и ищет каждое
-        """
-        # Убираем вес из текста
+        # 1. Извлекаем вес
         weight_match = re.search(r'(\d+)\s*г', text)
         explicit_weight = int(weight_match.group(1)) if weight_match else None
         
-        # Очищаем текст от веса
-        clean_text = re.sub(r'\d+\s*г', '', text)
+        if explicit_weight:
+            print(f"   Вес: {explicit_weight}г")
         
-        # Разбиваем на слова
-        words = clean_text.split()
+        # 2. Очищаем текст от веса и служебных слов
+        clean_text = re.sub(r'\d+\s*г', '', text).strip()
+        clean_text = re.sub(r'^(тарелка|порция|чашка|стакан|ложка|ложки|кусок|куска)\s+', '', clean_text)
         
-        # Убираем предлоги
-        stop_words = ['с', 'со', 'из', 'на', 'в', 'и', 'или', 'а', 'но', 'для', 'без', 'по']
-        words = [w for w in words if w not in stop_words]
+        print(f"   Очищенный текст: '{clean_text}'")
         
-        print(f"   Слова для поиска: {words}")
+        # 3. Нормализуем запрос (заменяем синонимы)
+        normalized = self._normalize_query(clean_text)
+        print(f"   Нормализованный: '{normalized}'")
         
-        results = []
+        # 4. Ищем в базе
+        food = self.db.find_best_match(normalized)
         
-        for word in words:
-            # Пропускаем короткие слова
-            if len(word) < 2:
-                continue
-            
-            # Нормализуем слово
-            word = self._normalize(word)
-            
-            # Ищем в базе
-            food = self.db.find_food_by_word(word)
-            
-            if food:
-                # Определяем вес
-                if explicit_weight:
-                    weight = explicit_weight
-                else:
-                    weight = self._get_default_weight(word)
-                
-                results.append({'name': food.name_ru, 'weight': weight})
-                print(f"   ✅ Найден: {food.name_ru} ({weight}г)")
-            else:
-                print(f"   ❌ Не найден: {word}")
+        if food:
+            weight = explicit_weight if explicit_weight else self._get_default_weight(food.name_ru)
+            print(f"   ✅ Найден: {food.name_ru} ({weight}г)")
+            return [{'name': food.name_ru, 'weight': weight}]
         
-        return results
+        print(f"   ❌ Не найден")
+        return []
     
-    def _normalize(self, word):
-        """Нормализует слово для поиска"""
+    def _normalize_query(self, text):
+        """
+        Нормализует запрос пользователя
+        Заменяет уменьшительные формы и синонимы
+        """
         synonyms = {
-            'овсянка': 'овсяная',
-            'гречка': 'гречневая',
-            'манка': 'манная',
-            'пшенка': 'пшенная',
-            'перловка': 'перловая',
+            'овсянка': 'овсяная каша',
+            'гречка': 'гречневая каша',
+            'манка': 'манная каша',
+            'пшенка': 'пшенная каша',
+            'перловка': 'перловая каша',
             'картошка': 'картофель',
             'помидор': 'томат',
             'семга': 'семга',
             'авокадо': 'авокадо',
+            'колбаска': 'колбаса',
+            'сосиска': 'сосиски',
+            'молочко': 'молоко',
+            'кефирчик': 'кефир',
+            'творожок': 'творог',
+            'хлебушек': 'хлеб',
+            'маслице': 'масло сливочное',
+            'сырок': 'сыр',
+            'кофеек': 'кофе',
+            'чайку': 'чай',
+            'сахарок': 'сахар',
         }
         
-        if word in synonyms:
-            return synonyms[word]
+        text_lower = text.lower()
+        for key, value in synonyms.items():
+            if key in text_lower:
+                text_lower = text_lower.replace(key, value)
         
-        # Убираем окончания
-        if word.endswith('ая') and len(word) > 2:
-            return word[:-2]  # овсяная -> овсян
-        
-        if word.endswith('ой') and len(word) > 2:
-            return word[:-2]  # семгой -> семг
-        
-        return word
+        return text_lower
     
-    def _get_default_weight(self, word):
-        """Стандартный вес для слова"""
-        portions = {
-            'кофе': 200, 'чай': 200, 'сок': 200,
-            'молоко': 200, 'кефир': 200, 'йогурт': 150,
-            'творог': 150, 'сметана': 20,
-            'хлеб': 50,
-            'яйцо': 50, 'яичница': 200,
-            'яблоко': 150, 'банан': 150,
-            'картофель': 200,
-            'овсяная': 250, 'гречневая': 250, 'манная': 250,
-            'каша': 250,
-            'суп': 350, 'борщ': 350, 'щи': 350, 'солянка': 350,
-            'салат': 200, 'пельмени': 200, 'шашлык': 200,
-            'семга': 80, 'авокадо': 80, 'сыр': 30,
-        }
+    def _get_default_weight(self, name):
+        """
+        Стандартный вес для продукта
+        """
+        name_lower = name.lower()
         
-        for key, portion in portions.items():
-            if key in word:
-                return portion
-        return 100
+        # Супы
+        if any(x in name_lower for x in ['суп', 'борщ', 'щи', 'солянка', 'окрошка', 'уха', 'рассольник']):
+            return 350
+        # Каши
+        if any(x in name_lower for x in ['каша', 'гречневая', 'овсяная', 'манная', 'рисовая', 'пшенная', 'перловая']):
+            return 250
+        # Салаты
+        if any(x in name_lower for x in ['салат', 'оливье', 'винегрет', 'цезарь']):
+            return 200
+        # Напитки
+        if any(x in name_lower for x in ['кофе', 'чай', 'сок', 'компот', 'кисель']):
+            return 200
+        # Молочка
+        if 'молоко' in name_lower or 'кефир' in name_lower:
+            return 200
+        if 'йогурт' in name_lower:
+            return 150
+        if 'творог' in name_lower:
+            return 150
+        if 'сметана' in name_lower:
+            return 20
+        # Хлеб
+        if 'хлеб' in name_lower:
+            return 50
+        # Яйца
+        if 'яйцо' in name_lower:
+            return 50
+        if 'яичница' in name_lower:
+            return 200
+        # Мясо
+        if any(x in name_lower for x in ['шашлык', 'стейк', 'отбивная']):
+            return 200
+        if any(x in name_lower for x in ['колбаса', 'сосиски', 'ветчина']):
+            return 50
+        # Рыба
+        if any(x in name_lower for x in ['семга', 'лосось', 'форель', 'сельдь']):
+            return 80
+        # Овощи
+        if any(x in name_lower for x in ['картофель', 'картошка']):
+            return 200
+        if any(x in name_lower for x in ['огурец', 'помидор', 'томат']):
+            return 100
+        # Фрукты
+        if any(x in name_lower for x in ['яблоко', 'банан', 'апельсин', 'груша']):
+            return 150
+        # Сладости
+        if 'шоколад' in name_lower:
+            return 20
+        if 'печенье' in name_lower:
+            return 30
+        
+        return 150  # вес по умолчанию

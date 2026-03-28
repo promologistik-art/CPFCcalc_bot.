@@ -169,41 +169,84 @@ class Database:
                 return portion
         return 100
 
-    def find_food_by_word(self, word):
+    def find_best_match(self, query):
         """
-        Ищет продукт по одному слову
+        Находит продукт, максимально похожий на запрос
         """
         session = self.Session()
-        word = word.lower().strip()
+        query = query.lower().strip()
         
-        print(f"      🔍 Ищем слово: '{word}'")
+        print(f"      🔍 Поиск по запросу: '{query}'")
         
-        # 1. Точное совпадение
-        food = session.query(Food).filter(Food.name_ru == word).first()
-        if food:
-            print(f"      ✅ Точное: {food.name_ru}")
-            session.close()
-            return food
+        # Разбиваем запрос на слова
+        query_words = query.split()
         
-        # 2. Название начинается с искомого слова
-        food = session.query(Food).filter(Food.name_ru.ilike(f'{word}%')).first()
-        if food:
-            print(f"      ✅ Начинается с: {food.name_ru}")
-            session.close()
-            return food
-        
-        # 3. Ищем по отдельным словам в названии
+        # Получаем все продукты
         all_foods = session.query(Food).all()
-        for food in all_foods:
-            food_words = food.name_ru.lower().split()
-            if word in food_words:
-                print(f"      ✅ Найдено по слову: {food.name_ru}")
-                session.close()
-                return food
         
-        print(f"      ❌ Не найдено")
+        scored = []
+        for food in all_foods:
+            food_name = food.name_ru.lower()
+            score = 0
+            
+            # 1. Точное совпадение всей строки
+            if food_name == query:
+                score += 1000
+            
+            # 2. Запрос содержится в названии
+            elif query in food_name:
+                score += 500
+            
+            # 3. Название содержится в запросе
+            elif food_name in query:
+                score += 300
+            
+            # 4. Считаем совпадения по словам
+            matched_words = 0
+            for word in query_words:
+                if len(word) > 2 and word in food_name:
+                    matched_words += 1
+                    score += 20
+            
+            # Бонус за количество совпавших слов
+            if matched_words > 0:
+                score += matched_words * 10
+            
+            # 5. Бонус за короткое название (приоритет простым продуктам)
+            score += 50 - len(food_name)
+            
+            # 6. Штраф за лишние слова (бренды, добавки)
+            bad_words = ['bombbar', 'протеин', 'fitkit', 'nestle', 'myllyn', 
+                         'активиа', 'детский', 'baby', 'с черникой', 'с клубникой', 
+                         'с малиной', 'с яблоком', 'с бананом', 'с персиком']
+            for bw in bad_words:
+                if bw in food_name:
+                    score -= 30
+                    break
+            
+            # 7. Бонус за совпадение с первым словом
+            if query_words and query_words[0] in food_name:
+                score += 15
+            
+            if score > 0:
+                scored.append((food, score))
+        
+        if not scored:
+            print(f"      ❌ Ничего не найдено")
+            session.close()
+            return None
+        
+        # Сортируем по убыванию score
+        scored.sort(key=lambda x: x[1], reverse=True)
+        
+        print(f"      📊 Топ-3 кандидата:")
+        for i, (food, score) in enumerate(scored[:3]):
+            print(f"         {i+1}. {food.name_ru} (score: {score})")
+        
+        best = scored[0][0]
+        print(f"      ✅ Выбран: {best.name_ru}")
         session.close()
-        return None
+        return best
 
     def add_meal_item(self, telegram_id, food_id, weight, meal_type='breakfast'):
         """
